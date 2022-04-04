@@ -1,0 +1,20 @@
+# Technically optional, but best set to your own loopback IPv4 address. Default
+# is 255.255.255.255, which does not make sense, but is good enough for routers
+# apparently.
+routerid: "10.0.0.200"
+# Not optional, set this to your ASN, or as configured on your routers
+asn: 553
+# A map of routers, you can query these individually as each gets its own table.
+routers:
+  # This is the name of the router. Use the DNS name, or whatever key you want
+  # to address queries by (i.e. for enriching Netflow, using SamplerAddress
+  # instead of DNS is convenient)
+  router-1:
+    # This is optional, and defaults to the asn configured above.
+    asn: 553
+    # A list of neighbors that this "router" group consists of. Typically there
+    # are two entries, one v4 and one v6. Their routes will be dumped into the
+    # same table for answering queries to this router.
+    neighbors:
+      - 10.0.0.1
+      - 2001:db8::1
