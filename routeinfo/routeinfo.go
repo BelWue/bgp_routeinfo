@@ -258,18 +258,19 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 		}
 
 		result = RouteInfo{
-			Best:             path.Best,
-			Peer:             path.NeighborIp,
-			Prefix:           fmt.Sprintf("%s/%d", Prefix.Prefix, Prefix.PrefixLen),
-			Validation:       valid,
-			Origin:           origin,
-			Med:              MultiExitDisc.Med,
-			LocalPref:        LocalPref.LocalPref,
-			NextHop:          nexthop,
 			AsPath:           aspath,
-			OriginAs:         aspath[len(aspath)-1],
+			Best:             path.Best,
 			Communities:      communities,
 			LargeCommunities: largecommunities,
+			LocalPref:        LocalPref.LocalPref,
+			Med:              MultiExitDisc.Med,
+			NextHop:          nexthop,
+			OriginAs:         aspath[len(aspath)-1],
+			Origin:           origin,
+			Peer:             path.NeighborIp,
+			Prefix:           fmt.Sprintf("%s/%d", Prefix.Prefix, Prefix.PrefixLen),
+			Timestamp:        path.Age.AsTime(),
+			Validation:       valid,
 		}
 		results = append(results, result)
 	}
@@ -319,18 +320,19 @@ func (v OriginValue) String() string {
 }
 
 type RouteInfo struct {
-	Best             bool
-	Peer             string
-	Prefix           string
-	Validation       ValidationStatus
-	Origin           OriginValue
-	Med              uint32
-	LocalPref        uint32
-	NextHop          string
-	AsPath           []uint32
-	OriginAs         uint32
-	Communities      []string
-	LargeCommunities []string
+	AsPath           []uint32         `json:"aspath"`
+	Best             bool             `json:"best"`
+	Communities      []string         `json:"communities"`
+	LargeCommunities []string         `json:"largecommunities"`
+	LocalPref        uint32           `json:"localpref"`
+	Med              uint32           `json:"med"`
+	NextHop          string           `json:"nexthop"`
+	OriginAs         uint32           `json:"originas"`
+	Origin           OriginValue      `json:"origin"`
+	Peer             string           `json:"peer"`
+	Prefix           string           `json:"prefix"`
+	Timestamp        time.Time        `json:"timestamp"`
+	Validation       ValidationStatus `json:"validation"`
 }
 
 func (r *Router) Status() (bool, bool) {
