@@ -16,5 +16,5 @@ routers:
     # are two entries, one v4 and one v6. Their routes will be dumped into the
     # same table for answering queries to this router.
     neighbors:
-      - 10.0.0.1
+      - 192.0.2.1
       - 2001:db8::1
