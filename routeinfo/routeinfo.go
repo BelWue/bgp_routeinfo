@@ -232,7 +232,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 		var communities []string
 		for _, community := range Communities.Communities {
 			front := community >> 16
-			back := community & 0xff
+			back := community & 0xffff
 			communities = append(communities, fmt.Sprintf("%d:%d", front, back))
 		}
 
