@@ -257,6 +257,13 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 			origin = OriginValue(Origin.Origin)
 		}
 
+		var originAS uint32
+		if len(aspath) > 0 {
+			originAS = aspath[len(aspath)-1]
+		} else {
+			originAS = 0
+		}
+
 		result = RouteInfo{
 			AsPath:           aspath,
 			Best:             path.Best,
@@ -265,7 +272,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 			LocalPref:        LocalPref.LocalPref,
 			Med:              MultiExitDisc.Med,
 			NextHop:          nexthop,
-			OriginAs:         aspath[len(aspath)-1],
+			OriginAs:         originAS,
 			Origin:           origin,
 			Peer:             path.NeighborIp,
 			Prefix:           fmt.Sprintf("%s/%d", Prefix.Prefix, Prefix.PrefixLen),
