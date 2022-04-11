@@ -18,9 +18,9 @@ type PrefixResult struct {
 }
 
 type RouterStatus struct {
-	Router string `json:"router"`
+	Router    string `json:"router"`
 	Connected bool   `json:"connected"`
-	Ready  bool   `json:"ready"`
+	Ready     bool   `json:"ready"`
 }
 
 type StatusResponse struct {
@@ -62,7 +62,7 @@ func status(writer http.ResponseWriter, request *http.Request) {
 	for name, router := range rs.Routers {
 		var rStatus RouterStatus
 		rStatus.Router = name
-        rStatus.Connected, rStatus.Ready = router.Status()
+		rStatus.Connected, rStatus.Ready = router.Status()
 		response.Results = append(response.Results, rStatus)
 	}
 	body, err := json.Marshal(response)
@@ -74,6 +74,7 @@ func status(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Access-Control-Allow-Origin", "*")
 	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
 	writer.Write(body)
 }
 
@@ -117,8 +118,10 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 		// can't really add error strings to the body here anymore...
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
 	}
+
 	writer.Header().Set("Content-Type", "application/json")
 	writer.Header().Set("Access-Control-Allow-Origin", "*")
 	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
 	writer.Write(body)
 }
