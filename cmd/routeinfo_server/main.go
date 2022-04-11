@@ -11,6 +11,28 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type PrefixResult struct {
+	Router string                `json:"router"`
+	Prefix string                `json:"prefix"`
+	Paths  []routeinfo.RouteInfo `json:"paths"`
+}
+
+type RouterStatus struct {
+	Router string `json:"router"`
+	Connected bool   `json:"connected"`
+	Ready  bool   `json:"ready"`
+}
+
+type StatusResponse struct {
+	Errors  []string       `json:"errors"`
+	Results []RouterStatus `json:"results"`
+}
+
+type PrefixResponse struct {
+	Errors  []string       `json:"errors"`
+	Results []PrefixResult `json:"results"`
+}
+
 var rs routeinfo.RouteInfoServer
 
 func main() {
@@ -30,46 +52,73 @@ func main() {
 
 	rs.Init() // try to establish all sessions
 
-	http.HandleFunc("/lookup", lookup)
-	http.HandleFunc("/list", list)
+	http.HandleFunc("/prefix", prefix)
+	http.HandleFunc("/status", status)
 	http.ListenAndServe(":3000", nil)
 }
 
-func list(writer http.ResponseWriter, request *http.Request) {
-	var rawResult []string
-	for _, router := range rs.Routers {
-		rawResult = append(rawResult, router.Name)
+func status(writer http.ResponseWriter, request *http.Request) {
+	var response StatusResponse
+	for name, router := range rs.Routers {
+		var rStatus RouterStatus
+		rStatus.Router = name
+        rStatus.Connected, rStatus.Ready = router.Status()
+		response.Results = append(response.Results, rStatus)
 	}
-	result, _ := json.Marshal(rawResult)
+	body, err := json.Marshal(response)
+	if err != nil {
+		// can't really add error strings to the body here anymore...
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	}
 
 	writer.Header().Set("Content-Type", "application/json")
-	writer.Write(result)
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	writer.Write(body)
 }
 
-func lookup(writer http.ResponseWriter, request *http.Request) {
+func prefix(writer http.ResponseWriter, request *http.Request) {
+	var response PrefixResponse
+
 	qRouter := request.URL.Query().Get("router")
 	var router *routeinfo.Router
 	var ok bool
 	if router, ok = rs.Routers[qRouter]; !ok {
-		http.Error(writer, "No such router!", http.StatusInternalServerError)
-		return
+		response.Errors = append(response.Errors, "No such router.")
+	} else {
+		// TODO remove debug
+		response.Errors = append(response.Errors, router.Name)
 	}
 
 	qPrefix := request.URL.Query().Get("prefix")
-	// TODO: properly do this
-	var valid = true
-	if !valid {
-		http.Error(writer, "Oh no!", http.StatusInternalServerError)
-		return
+	// TODO: properly validate input
+	//var valid = true
+	//if !valid {
+	//	errors.append(errors, "No such .")
+	//}
+
+	// TODO this should be able to loop over multiple or all routers
+	var pr PrefixResult
+	pr.Router = qRouter // FIXME TODO
+	pr.Paths = router.Lookup(qPrefix)
+	if len(pr.Paths) > 0 {
+		pr.Prefix = pr.Paths[0].Prefix
+		for _, path := range pr.Paths[1:] {
+			if path.Prefix != pr.Prefix {
+				response.Errors = append(response.Errors, "RIB returned multiple paths with different prefixes.")
+				break
+			}
+		}
+		response.Results = append(response.Results, pr)
 	}
 
-	result := router.Lookup(qPrefix)
-	jResult, err := json.Marshal(result)
+	body, err := json.Marshal(response)
 	if err != nil {
+		// can't really add error strings to the body here anymore...
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
-		return
 	}
-
 	writer.Header().Set("Content-Type", "application/json")
-	writer.Write(jResult)
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	writer.Write(body)
 }
