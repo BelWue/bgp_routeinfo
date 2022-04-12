@@ -153,7 +153,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 
 	// no answer here
 	if destination == nil {
-		log.Printf("[warning] No destination returned for %s.\n", address)
+        //log.Printf("[warning] No destination returned for %s.\n", address)
 		return nil
 	}
 
@@ -202,8 +202,8 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 				continue
 			} else if err := pattr.UnmarshalTo(OriginatorId); err == nil { //not used
 				continue
-			} else {
-				log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
+			//} else {
+			//	log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
 			}
 		}
 
