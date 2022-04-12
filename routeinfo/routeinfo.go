@@ -72,8 +72,6 @@ type Router struct {
 	Asn         uint32   `yaml:"asn"`
 	Neighbors   []string `yaml:"neighbors"`
 	GobgpServer *server.BgpServer
-
-	peers []*api.Peer
 }
 
 func (r *Router) Connect() {
@@ -95,7 +93,6 @@ func (r *Router) Connect() {
 		}
 
 	}
-	r.getPeers()
 }
 
 func (r *Router) LookupShorter(address string) []RouteInfo {
@@ -156,7 +153,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 
 	// no answer here
 	if destination == nil {
-		//log.Printf("[warning] No destination returned for %s.\n", address)
+        //log.Printf("[warning] No destination returned for %s.\n", address)
 		return nil
 	}
 
@@ -205,8 +202,8 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 				continue
 			} else if err := pattr.UnmarshalTo(OriginatorId); err == nil { //not used
 				continue
-				//} else {
-				//	log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
+			//} else {
+			//	log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
 			}
 		}
 
@@ -348,23 +345,16 @@ type RouteInfo struct {
 func (r *Router) Status() (bool, bool) {
 	var connected = true
 	var ready = true
-	for _, peer := range r.peers {
-		connected = connected && peer.State.SessionState == api.PeerState_ESTABLISHED
-		for _, a := range peer.AfiSafis {
-			s := a.MpGracefulRestart.State
-			ready = ready && s.EndOfRibReceived
-		}
-	}
-	return connected, ready
-}
-
-func (r *Router) getPeers() {
-	r.peers = []*api.Peer{}
 	for _, addr := range r.Neighbors {
 		r.GobgpServer.ListPeer(context.Background(), &api.ListPeerRequest{Address: addr}, func(p *api.Peer) {
-			r.peers = append(r.peers, p)
+			connected = connected && p.State.SessionState == api.PeerState_ESTABLISHED
+			for _, a := range p.AfiSafis {
+				s := a.MpGracefulRestart.State
+				ready = ready && s.EndOfRibReceived
+			}
 		})
 	}
+	return connected, ready
 }
 
 func (r *Router) WaitForEOR() {
