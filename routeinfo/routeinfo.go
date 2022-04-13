@@ -67,6 +67,9 @@ func (rs *RouteInfoServer) Init() {
 		if router.GobgpServer == nil {
 			router.GobgpServer = rs.getBgpInstance(router)
 		}
+		if router.neighborSessionState == nil {
+			router.neighborSessionState = make(map[string]api.PeerState_SessionState)
+		}
 		router.Connect()
 	}
 }
