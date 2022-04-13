@@ -63,6 +63,7 @@ func main() {
 	go func() {
 		<-sigc
 		rs.Stop()
+		os.Exit(0)
 	}()
 
 	http.HandleFunc("/prefix", prefix)
