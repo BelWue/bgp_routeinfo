@@ -364,13 +364,12 @@ func (router *Router) Status() (bool, bool) {
 
 func (router *Router) Established() bool {
 	router.neighborSessionStateLock.Lock()
+	defer router.neighborSessionStateLock.Unlock()
 	for _, state := range router.neighborSessionState {
 		if state != api.PeerState_ESTABLISHED {
-			router.neighborSessionStateLock.Unlock()
 			return false
 		}
 	}
-	router.neighborSessionStateLock.Unlock()
 	return true
 }
 
