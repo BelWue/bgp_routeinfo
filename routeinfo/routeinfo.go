@@ -74,6 +74,12 @@ func (rs *RouteInfoServer) Init() {
 	}
 }
 
+func (rs *RouteInfoServer) Stop() {
+	for _, router := range rs.Routers {
+		router.GobgpServer.Stop()
+	}
+}
+
 type Router struct {
 	Name                     string   `yaml:"name"`
 	Asn                      uint32   `yaml:"asn"`

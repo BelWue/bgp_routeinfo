@@ -6,6 +6,9 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/BelWue/bgp_routeinfo/routeinfo"
 	"gopkg.in/yaml.v2"
@@ -18,9 +21,8 @@ type PrefixResult struct {
 }
 
 type RouterStatus struct {
-	Router    string `json:"router"`
-	Connected bool   `json:"connected"`
-	Ready     bool   `json:"ready"`
+	Router string `json:"router"`
+	Ready  bool   `json:"ready"`
 }
 
 type StatusResponse struct {
@@ -52,6 +54,17 @@ func main() {
 
 	rs.Init() // try to establish all sessions
 
+	// clean shutdown on ^C
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+	go func() {
+		<-sigc
+		rs.Stop()
+	}()
+
 	http.HandleFunc("/prefix", prefix)
 	http.HandleFunc("/status", status)
 	http.ListenAndServe(":3000", nil)
@@ -62,7 +75,8 @@ func status(writer http.ResponseWriter, request *http.Request) {
 	for name, router := range rs.Routers {
 		var rStatus RouterStatus
 		rStatus.Router = name
-		rStatus.Connected, rStatus.Ready = router.Status()
+		// TODO also check if EOR was seen
+		rStatus.Ready = router.Established()
 		response.Results = append(response.Results, rStatus)
 	}
 	body, err := json.Marshal(response)
