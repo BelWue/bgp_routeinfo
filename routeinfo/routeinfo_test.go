@@ -3,6 +3,8 @@ package routeinfo
 import (
 	"io/ioutil"
 	"log"
+	"math/rand"
+	"strconv"
 	"testing"
 
 	"gopkg.in/yaml.v2"
