@@ -133,9 +133,6 @@ func (r *Router) LookupLonger(address string) []RouteInfo {
 }
 
 func (r *Router) Lookup(address string) []RouteInfo {
-	if parsed, _, _ := net.ParseCIDR(address); parsed != nil {
-		address = parsed.String()
-	}
 	return r.lookup(address, api.TableLookupPrefix_EXACT)
 }
 
