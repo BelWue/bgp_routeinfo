@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>BelWü :: Route-Server</title>
+    <meta charset="utf-8">
+    <meta name="title" content="Looking Glass">
+    <script src="config.js" defer></script>
+    <script src="lookingglass.js" defer></script>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div id="lg-container">
+    </div>
+    <template id="lg-template-query">
+      <div id="lg-query-block" class="lg-query-block">
+        <div id="lg-query-form-block" class="lg-query-form-block">
+          <h1 id="lg-query-heading"></h1>
+          <form id="lg-query-form" action="" method="dialog" onSubmit="javascipt:queryPrefix();">
+            <input id="lg-query-prefix" type="text" placeholder="Address/Prefix (e.g.2001:db0::/32)" pattern="^(([0-9]+\.){3}[0-9]+|[0-9a-fA-F:]+)(\/[0-9]+)?$" required>
+            <select id="lg-query-router" required>
+              <option value="-" hidden disabled selected></option>
+              <option value="">(all)</option>
+            </select>
+            <input type="submit" value="Go">
+          </form>
+        </div>
+      </div>
+    </template>
+    <template id="lg-template-result-prefix">
+      <div id="lg-result-block">
+        <p id="lg-prefix-results" class="lg-prefix-results"></p>
+      </div>
+    </template>
+    <template id="lg-template-prefix-router">
+      <div id="lg-prefix-router" class="lg-prefix-router">
+        <h2 id="lg-prefix-result-info" class="lg-prefix-result-info">Router <span id="lg-prefix-router-name" class="lg-prefix-router-name"></span><br><span id="lg-prefix-router-prefix" class="lg-prefix-router-prefix"></span></h2>
+      </div>
+    </template>
+    <template id="lg-template-path">
+      <p id="lg-path" class="lg-path">
+        <span id="lg-path-aspath" class="lg-path-aspath"></span><br><span id="lg-path-nexthop" class="lg-path-nexthop"></span><br><span id="lg-path-metrics" class="lg-path-metrics"></span><br><span id="lg-path-tags" class="lg-path-tags"></span>
+      </p>
+    </template>
+    <template id="lg-template-tag">
+      <span id="lg-tag" class="lg-tag"></span>
+    </template>
+    <template id="lg-template-api-link">
+      <div id="lg-api-link-box" class="lg-api-link-box">
+        <a id="lg-api-link" class="lg-api-link" alt="JSON API Link" target="_blank">Result as raw JSON &#128279;</a>
+      </div>
+    </template>
+  </body>
+</html>
