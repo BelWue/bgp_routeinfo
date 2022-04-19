@@ -75,9 +75,15 @@ func (rs *RouteInfoServer) Init() {
 }
 
 func (rs *RouteInfoServer) Stop() {
+	var wg sync.WaitGroup
 	for _, router := range rs.Routers {
-		router.GobgpServer.Stop()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			router.GobgpServer.Stop()
+		}()
 	}
+	wg.Wait()
 }
 
 type Router struct {
