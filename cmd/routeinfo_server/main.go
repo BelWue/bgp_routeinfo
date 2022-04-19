@@ -96,14 +96,19 @@ func status(writer http.ResponseWriter, request *http.Request) {
 func prefix(writer http.ResponseWriter, request *http.Request) {
 	var response PrefixResponse
 
-	qRouter := request.URL.Query().Get("router")
-	var router *routeinfo.Router
-	var ok bool
-	if router, ok = rs.Routers[qRouter]; !ok {
-		response.Errors = append(response.Errors, "No such router.")
+	qRouters := request.URL.Query()["router"]
+	routers := make(map[string]*routeinfo.Router)
+	if (len(qRouters) == 1 && len(qRouters[0]) > 0) || len(qRouters) > 1 {
+		for _, qRouter := range qRouters {
+			if router, ok := rs.Routers[qRouter]; ok {
+				routers[qRouter] = router
+			} else {
+				response.Errors = append(response.Errors, "Router not found.")
+			}
+		}
 	} else {
-		// TODO remove debug
-		response.Errors = append(response.Errors, router.Name)
+		// no filter for router name, so use all routers
+		routers = rs.Routers
 	}
 
 	qPrefix := request.URL.Query().Get("prefix")
@@ -113,19 +118,20 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 	//	errors.append(errors, "No such .")
 	//}
 
-	// TODO this should be able to loop over multiple or all routers
-	var pr PrefixResult
-	pr.Router = qRouter // FIXME TODO
-	pr.Paths = router.Lookup(qPrefix)
-	if len(pr.Paths) > 0 {
-		pr.Prefix = pr.Paths[0].Prefix
-		for _, path := range pr.Paths[1:] {
-			if path.Prefix != pr.Prefix {
-				response.Errors = append(response.Errors, "RIB returned multiple paths with different prefixes.")
-				break
+	for routerName, router := range routers {
+		var pr PrefixResult
+		pr.Router = routerName
+		pr.Paths = router.Lookup(qPrefix)
+		if len(pr.Paths) > 0 {
+			pr.Prefix = pr.Paths[0].Prefix
+			for _, path := range pr.Paths[1:] {
+				if path.Prefix != pr.Prefix {
+					response.Errors = append(response.Errors, "RIB returned multiple paths with different prefixes.")
+					break
+				}
 			}
+			response.Results = append(response.Results, pr)
 		}
-		response.Results = append(response.Results, pr)
 	}
 
 	body, err := json.Marshal(response)
