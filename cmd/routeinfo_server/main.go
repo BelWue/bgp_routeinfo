@@ -6,10 +6,34 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/BelWue/bgp_routeinfo/routeinfo"
 	"gopkg.in/yaml.v2"
 )
+
+type PrefixResult struct {
+	Router string                `json:"router"`
+	Prefix string                `json:"prefix"`
+	Paths  []routeinfo.RouteInfo `json:"paths"`
+}
+
+type RouterStatus struct {
+	Router string `json:"router"`
+	Ready  bool   `json:"ready"`
+}
+
+type StatusResponse struct {
+	Errors  []string       `json:"errors"`
+	Results []RouterStatus `json:"results"`
+}
+
+type PrefixResponse struct {
+	Errors  []string       `json:"errors"`
+	Results []PrefixResult `json:"results"`
+}
 
 var rs routeinfo.RouteInfoServer
 
@@ -30,46 +54,95 @@ func main() {
 
 	rs.Init() // try to establish all sessions
 
-	http.HandleFunc("/lookup", lookup)
-	http.HandleFunc("/list", list)
+	// clean shutdown on ^C
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+	go func() {
+		<-sigc
+		rs.Stop()
+		os.Exit(0)
+	}()
+
+	http.HandleFunc("/prefix", prefix)
+	http.HandleFunc("/status", status)
 	http.ListenAndServe(":3000", nil)
 }
 
-func list(writer http.ResponseWriter, request *http.Request) {
-	var rawResult []string
-	for _, router := range rs.Routers {
-		rawResult = append(rawResult, router.Name)
+func status(writer http.ResponseWriter, request *http.Request) {
+	var response StatusResponse
+	for name, router := range rs.Routers {
+		var rStatus RouterStatus
+		rStatus.Router = name
+		// TODO also check if EOR was seen
+		rStatus.Ready = router.Established()
+		response.Results = append(response.Results, rStatus)
 	}
-	result, _ := json.Marshal(rawResult)
+	body, err := json.Marshal(response)
+	if err != nil {
+		// can't really add error strings to the body here anymore...
+		http.Error(writer, err.Error(), http.StatusInternalServerError)
+	}
 
 	writer.Header().Set("Content-Type", "application/json")
-	writer.Write(result)
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	writer.Write(body)
 }
 
-func lookup(writer http.ResponseWriter, request *http.Request) {
-	qRouter := request.URL.Query().Get("router")
-	var router *routeinfo.Router
-	var ok bool
-	if router, ok = rs.Routers[qRouter]; !ok {
-		http.Error(writer, "No such router!", http.StatusInternalServerError)
-		return
+func prefix(writer http.ResponseWriter, request *http.Request) {
+	var response PrefixResponse
+
+	qRouters := request.URL.Query()["router"]
+	routers := make(map[string]*routeinfo.Router)
+	if (len(qRouters) == 1 && len(qRouters[0]) > 0) || len(qRouters) > 1 {
+		for _, qRouter := range qRouters {
+			if router, ok := rs.Routers[qRouter]; ok {
+				routers[qRouter] = router
+			} else {
+				response.Errors = append(response.Errors, "Router not found.")
+			}
+		}
+	} else {
+		// no filter for router name, so use all routers
+		routers = rs.Routers
 	}
 
 	qPrefix := request.URL.Query().Get("prefix")
-	// TODO: properly do this
-	var valid = true
-	if !valid {
-		http.Error(writer, "Oh no!", http.StatusInternalServerError)
-		return
+	// TODO: properly validate input
+	//var valid = true
+	//if !valid {
+	//	errors.append(errors, "No such .")
+	//}
+
+	for routerName, router := range routers {
+		var pr PrefixResult
+		pr.Router = routerName
+		pr.Paths = router.Lookup(qPrefix)
+		if len(pr.Paths) > 0 {
+			pr.Prefix = pr.Paths[0].Prefix
+			for _, path := range pr.Paths[1:] {
+				if path.Prefix != pr.Prefix {
+					response.Errors = append(response.Errors, "RIB returned multiple paths with different prefixes.")
+					break
+				}
+			}
+			response.Results = append(response.Results, pr)
+		}
 	}
 
-	result := router.Lookup(qPrefix)
-	jResult, err := json.Marshal(result)
+	body, err := json.Marshal(response)
 	if err != nil {
+		// can't really add error strings to the body here anymore...
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	writer.Header().Set("Content-Type", "application/json")
-	writer.Write(jResult)
+	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	writer.Write(body)
 }

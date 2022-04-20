@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"log"
@@ -19,7 +20,7 @@ type RouteInfoServer struct {
 	Routers  map[string]*Router `yaml:"routers"`
 }
 
-func (rs *RouteInfoServer) getBgpInstance() *server.BgpServer {
+func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 	server := server.NewBgpServer(server.LoggerOption(&silentLogger{}))
 	go server.Serve()
 
@@ -45,6 +46,9 @@ func (rs *RouteInfoServer) getBgpInstance() *server.BgpServer {
 				// I don't know why this happens, but I don't want it logged.
 				return
 			}
+			router.neighborSessionStateLock.Lock()
+			router.neighborSessionState[peer.NeighborAddress] = peer.SessionState
+			router.neighborSessionStateLock.Unlock()
 			log.Printf("[info] Peer %d/%s is in state '%s'", peer.PeerAsn, peer.NeighborAddress, peer.SessionState)
 		}
 	})
@@ -53,25 +57,42 @@ func (rs *RouteInfoServer) getBgpInstance() *server.BgpServer {
 }
 
 func (rs *RouteInfoServer) Init() {
-	for name, r := range rs.Routers {
-		if len(r.Neighbors) == 0 {
+	for name, router := range rs.Routers {
+		if len(router.Neighbors) == 0 {
 			log.Fatalf("[error] unconfigured router %s\n", name)
 		}
-		if r.Asn == 0 {
-			r.Asn = rs.Asn
+		if router.Asn == 0 {
+			router.Asn = rs.Asn
 		}
-		if r.GobgpServer == nil {
-			r.GobgpServer = rs.getBgpInstance()
+		if router.GobgpServer == nil {
+			router.GobgpServer = rs.getBgpInstance(router)
 		}
-		r.Connect()
+		if router.neighborSessionState == nil {
+			router.neighborSessionState = make(map[string]api.PeerState_SessionState)
+		}
+		router.Connect()
 	}
 }
 
+func (rs *RouteInfoServer) Stop() {
+	var wg sync.WaitGroup
+	for _, router := range rs.Routers {
+		wg.Add(1)
+		go func(myrouter *Router) {
+			defer wg.Done()
+			myrouter.GobgpServer.Stop()
+		}(router)
+	}
+	wg.Wait()
+}
+
 type Router struct {
-	Name        string   `yaml:"name"`
-	Asn         uint32   `yaml:"asn"`
-	Neighbors   []string `yaml:"neighbors"`
-	GobgpServer *server.BgpServer
+	Name                     string   `yaml:"name"`
+	Asn                      uint32   `yaml:"asn"`
+	Neighbors                []string `yaml:"neighbors"`
+	neighborSessionState     map[string]api.PeerState_SessionState
+	neighborSessionStateLock sync.Mutex
+	GobgpServer              *server.BgpServer
 }
 
 func (r *Router) Connect() {
@@ -118,9 +139,6 @@ func (r *Router) LookupLonger(address string) []RouteInfo {
 }
 
 func (r *Router) Lookup(address string) []RouteInfo {
-	if parsed, _, _ := net.ParseCIDR(address); parsed != nil {
-		address = parsed.String()
-	}
 	return r.lookup(address, api.TableLookupPrefix_EXACT)
 }
 
@@ -153,7 +171,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 
 	// no answer here
 	if destination == nil {
-		log.Printf("[warning] No destination returned for %s.\n", address)
+		//log.Printf("[warning] No destination returned for %s.\n", address)
 		return nil
 	}
 
@@ -176,7 +194,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 		var OriginatorId = &api.OriginatorIdAttribute{}
 
 		for _, pattr := range path.Pattrs {
-			if err := pattr.UnmarshalTo(Origin); err == nil { // TODO: this is useless and won't be read
+			if err := pattr.UnmarshalTo(Origin); err == nil {
 				continue
 			} else if err := pattr.UnmarshalTo(AsPath); err == nil {
 				continue
@@ -232,7 +250,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 		var communities []string
 		for _, community := range Communities.Communities {
 			front := community >> 16
-			back := community & 0xff
+			back := community & 0xffff
 			communities = append(communities, fmt.Sprintf("%d:%d", front, back))
 		}
 
@@ -257,6 +275,13 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 			origin = OriginValue(Origin.Origin)
 		}
 
+		var originAS uint32
+		if len(aspath) > 0 {
+			originAS = aspath[len(aspath)-1]
+		} else {
+			originAS = 0
+		}
+
 		result = RouteInfo{
 			AsPath:           aspath,
 			Best:             path.Best,
@@ -265,7 +290,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 			LocalPref:        LocalPref.LocalPref,
 			Med:              MultiExitDisc.Med,
 			NextHop:          nexthop,
-			OriginAs:         aspath[len(aspath)-1],
+			OriginAs:         originAS,
 			Origin:           origin,
 			Peer:             path.NeighborIp,
 			Prefix:           fmt.Sprintf("%s/%d", Prefix.Prefix, Prefix.PrefixLen),
@@ -335,26 +360,37 @@ type RouteInfo struct {
 	Validation       ValidationStatus `json:"validation"`
 }
 
-func (r *Router) Status() (bool, bool) {
-	var connected = true
+func (router *Router) Status() (bool, bool) {
 	var ready = true
-	for _, addr := range r.Neighbors {
-		r.GobgpServer.ListPeer(context.Background(), &api.ListPeerRequest{Address: addr}, func(p *api.Peer) {
-			connected = connected && p.State.SessionState == api.PeerState_ESTABLISHED
+	for _, address := range router.Neighbors {
+		router.GobgpServer.ListPeer(context.Background(), &api.ListPeerRequest{Address: address}, func(p *api.Peer) {
 			for _, a := range p.AfiSafis {
 				s := a.MpGracefulRestart.State
 				ready = ready && s.EndOfRibReceived
 			}
 		})
 	}
+	connected := router.Established()
 	return connected, ready
 }
 
-func (r *Router) WaitForEOR() {
+func (router *Router) Established() bool {
+	router.neighborSessionStateLock.Lock()
+	defer router.neighborSessionStateLock.Unlock()
+	for _, state := range router.neighborSessionState {
+		if state != api.PeerState_ESTABLISHED {
+			return false
+		}
+	}
+	return true
+}
+
+func (router *Router) WaitForEOR() {
+	// TODO check for EOR separately
 	var ready bool
 	for !ready {
 		time.Sleep(time.Second * 1)
-		_, ready = r.Status()
+		_, ready = router.Status()
 	}
 }
 
