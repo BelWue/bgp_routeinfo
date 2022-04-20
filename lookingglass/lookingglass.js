@@ -95,7 +95,7 @@ function addPathElement(path, container) {
         pathElement.querySelector("#lg-path").classList.add("lg-path-best");
         tagSection.appendChild(newTag("best"));
     }
-        tagSection.appendChild(newTag(`RPKI ${validityMapping[path.validation]}`));
+    tagSection.appendChild(newTag(`RPKI ${validityMapping[path.validation]}`));
 
     // communities and large-communities
     var tagSection = pathElement.querySelector("#lg-path-tags");
@@ -115,10 +115,10 @@ function addPathElement(path, container) {
 }
 
 function newWarningMessage(text) {
-        var oopsie = document.createElement("p");
-        oopsie.textContent = text;
-        oopsie.classList.add("lg-warning");
-        return oopsie;
+    var oopsie = document.createElement("p");
+    oopsie.textContent = text;
+    oopsie.classList.add("lg-warning");
+    return oopsie;
 }
 
 function displayStatus(data, container) {
@@ -249,11 +249,18 @@ function queryPrefix() {
 
     // display a link to raw JSON output
     if (lgSettings.routeinfoAPI.showAPILink) {
-        var apiLinkTemplate = document.querySelector("#lg-template-api-link");
-        var apiLink = document.importNode(apiLinkTemplate.content, true);
-        apiLink.querySelector("#lg-api-link").href = url;
-        var querySection = document.querySelector("#lg-query-block");
-        querySection.appendChild(apiLink);
+        // check if an old link exists and remove it
+        var lastAPILink = document.querySelector("#lg-query-block").querySelector("#lg-api-link-block");
+        if (lastAPILink) {
+            lastAPILink.href = url;
+        } else {
+            // copy the template and set the right URL
+            var apiLinkTemplate = document.querySelector("#lg-template-api-link");
+            var apiLink = document.importNode(apiLinkTemplate.content, true);
+            apiLink.querySelector("#lg-api-link").href = url;
+            var querySection = document.querySelector("#lg-query-block");
+            querySection.appendChild(apiLink);
+        }
     }
 }
 
