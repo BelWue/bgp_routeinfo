@@ -152,6 +152,7 @@ function displayStatus(data, container) {
         }
         select.appendChild(option);
     });
+    select.onchange = validateRouterSelect;
 
     container.appendChild(clone);
 
@@ -210,7 +211,26 @@ function queryStatus() {
     // TODO handle .catch
 }
 
+function validateRouterSelect() {
+    // check if the router placeholder is selected
+    var form = document.querySelector("#lg-query-form");
+    var formSelectRouter = form.querySelector("#lg-query-router")
+    if (formSelectRouter.value == "-") {
+        formSelectRouter.setCustomValidity("Please select a router.");
+        return;
+    } else {
+        formSelectRouter.setCustomValidity("");
+    }
+}
+
 function queryPrefix() {
+    // check the form validity
+    validateRouterSelect();
+    var form = document.querySelector("#lg-query-form");
+    if (!form.reportValidity()) {
+        return;
+    }
+
     // disable request on hash change (will be enabled in displayPrefix when the response has arrived)
     window.onhashchange = function(){ return; }
 
@@ -283,11 +303,7 @@ function loadQuery() {
         routerSelectElement.value = "";
     }
 
-    //queryPrefix();
-    var form = document.querySelector("#lg-query-form");
-    if (form.reportValidity()) {
-        queryPrefix();
-    }
+    queryPrefix();
     window.onhashchange = loadQuery;
 }
 
