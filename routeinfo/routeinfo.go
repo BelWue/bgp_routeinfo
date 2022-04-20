@@ -78,10 +78,10 @@ func (rs *RouteInfoServer) Stop() {
 	var wg sync.WaitGroup
 	for _, router := range rs.Routers {
 		wg.Add(1)
-		go func() {
+		go func(myrouter *Router) {
 			defer wg.Done()
-			router.GobgpServer.Stop()
-		}()
+			myrouter.GobgpServer.Stop()
+		}(router)
 	}
 	wg.Wait()
 }
