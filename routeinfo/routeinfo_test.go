@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -48,6 +49,9 @@ func init() {
 }
 
 func BenchmarkLookupIPv4Random(b *testing.B) {
+	// no logs to slow us down
+	log.SetOutput(ioutil.Discard)
+	os.Stdout, _ = os.Open(os.DevNull)
 	addresses := make([]string, addressCacheSize)
 	for n := 0; n < addressCacheSize; n++ {
 		addresses[n] = strconv.Itoa(rand.Intn(255)) + "." + strconv.Itoa(rand.Intn(255)) + "." + strconv.Itoa(rand.Intn(255)) + "." + strconv.Itoa(rand.Intn(255))
@@ -61,6 +65,9 @@ func BenchmarkLookupIPv4Random(b *testing.B) {
 }
 
 func BenchmarkLookupIPv4Static(b *testing.B) {
+	// no logs to slow us down
+	log.SetOutput(ioutil.Discard)
+	os.Stdout, _ = os.Open(os.DevNull)
 	addresses := make([]string, addressCacheSize)
 	for n := 0; n < addressCacheSize; n++ {
 		addresses[n] = "1.1.1.1"
@@ -74,14 +81,18 @@ func BenchmarkLookupIPv4Static(b *testing.B) {
 }
 
 func BenchmarkEstablished(b *testing.B) {
-	b.ResetTimer()
+	// no logs to slow us down
+	log.SetOutput(ioutil.Discard)
+	os.Stdout, _ = os.Open(os.DevNull)
 	for n := 0; n < b.N; n++ {
 		router.Established()
 	}
 }
 
 func BenchmarkStatus(b *testing.B) {
-	b.ResetTimer()
+	// no logs to slow us down
+	log.SetOutput(ioutil.Discard)
+	os.Stdout, _ = os.Open(os.DevNull)
 	for n := 0; n < b.N; n++ {
 		router.Status()
 	}

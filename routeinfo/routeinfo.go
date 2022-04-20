@@ -194,7 +194,7 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 		var OriginatorId = &api.OriginatorIdAttribute{}
 
 		for _, pattr := range path.Pattrs {
-			if err := pattr.UnmarshalTo(Origin); err == nil { // TODO: this is useless and won't be read
+			if err := pattr.UnmarshalTo(Origin); err == nil {
 				continue
 			} else if err := pattr.UnmarshalTo(AsPath); err == nil {
 				continue
@@ -220,8 +220,8 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 				continue
 			} else if err := pattr.UnmarshalTo(OriginatorId); err == nil { //not used
 				continue
-				//} else {
-				//	log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
+			} else {
+				log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
 			}
 		}
 
