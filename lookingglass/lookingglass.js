@@ -5,7 +5,7 @@
 var statusURL = lgSettings.routeinfoAPI.URL + "/status";
 var prefixURL = lgSettings.routeinfoAPI.URL + "/prefix";
 
-// RFC 6811 
+// RFC 6811
 var validityMapping = {
     0: "Valid",
     1: "NotFound",
@@ -95,7 +95,7 @@ function addPathElement(path, container) {
         pathElement.querySelector("#lg-path").classList.add("lg-path-best");
         tagSection.appendChild(newTag("best"));
     }
-        tagSection.appendChild(newTag(`RPKI ${validityMapping[path.validation]}`));
+    tagSection.appendChild(newTag(`RPKI ${validityMapping[path.validation]}`));
 
     // communities and large-communities
     var tagSection = pathElement.querySelector("#lg-path-tags");
@@ -115,10 +115,10 @@ function addPathElement(path, container) {
 }
 
 function newWarningMessage(text) {
-        var oopsie = document.createElement("p");
-        oopsie.textContent = text;
-        oopsie.classList.add("lg-warning");
-        return oopsie;
+    var oopsie = document.createElement("p");
+    oopsie.textContent = text;
+    oopsie.classList.add("lg-warning");
+    return oopsie;
 }
 
 function displayStatus(data, container) {
@@ -152,6 +152,7 @@ function displayStatus(data, container) {
         }
         select.appendChild(option);
     });
+    select.onchange = validateRouterSelect;
 
     container.appendChild(clone);
 
@@ -172,6 +173,83 @@ function addPrefixResult(result, container) {
         addPathElement(path, prefixRouterSection);
     });
     container.appendChild(clone);
+}
+
+function prefixResultsToGraph(results) {
+    var localName = lgSettings.graph.localASName;
+
+    // build a list with all connections between any two AS
+    var pathElements = [];
+    results.forEach(function(router){
+        router.paths.forEach(function(path){
+            // empty paths are returned as null instead of empty array
+            var pathlen = 0;
+            if (path.aspath && path.aspath.length) {
+                pathlen = path.aspath.length;
+            }
+
+            if (pathlen == 0) {
+                // loop to self ("local")
+                if (lgSettings.graph.drawLocalAsLoop) {
+                    pathElements.push({
+                        "best": path.best,
+                        "from": localName,
+                        "to": localName
+                    });
+                }
+            } else {
+                // arrow to first element
+                pathElements.push({
+                    "best": path.best,
+                    "from": localName,
+                    "to": path.aspath[0]
+                });
+            }
+
+            // arrows for all following aspath elements
+            for (let i = 0; i < (pathlen - 1); i++) {
+                if (path.aspath[i] == path.aspath[i+1] && !lgSettings.graph.drawPrepends) {
+                    // don't draw prepended paths with loops
+                    continue;
+                }
+                pathElements.push({
+                    "best": path.best,
+                    "from": path.aspath[i],
+                    "to": path.aspath[i+1]
+                });
+            }
+        });
+    });
+
+    // deduplicate paths
+    var deduplicatedPaths = [];
+    for (const path of pathElements) {
+        var found = false;
+        for (const dedupedPath of deduplicatedPaths) {
+            if ((path.from == dedupedPath.from) && (path.to == dedupedPath.to)) {
+                // path is already in deduplicatedPaths
+                // set best == true if one of them was marked best
+                dedupedPath.best = dedupedPath.best || path.best;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            deduplicatedPaths.push(path);
+        }
+    }
+
+    // build graph definition in text form
+    graphDefinition = `flowchart LR\n  ${localName}`;
+    deduplicatedPaths.forEach(function(path){
+        // dashed arrow by default, normal arrow for best path
+        var arrow = "-.->";
+        if (path.best) {
+            arrow = "-->";
+        }
+        graphDefinition += `\n  ${path.from} ${arrow} ${path.to}`;
+    });
+    return graphDefinition;
 }
 
 function displayPrefix(data, container) {
@@ -197,6 +275,16 @@ function displayPrefix(data, container) {
 
     // append the block to the container
     container.appendChild(clone);
+
+    // BGP graph
+    if (lgSettings.graph.enabled) {
+        var bgpGraphTemplate = document.querySelector("#lg-template-bgp-graph")
+        var bgpGraphBlock = document.importNode(bgpGraphTemplate.content, true);
+        var bgpGraph = bgpGraphBlock.querySelector("#lg-bgp-graph");
+        bgpGraph.textContent = prefixResultsToGraph(data.results);
+        resultBlock.appendChild(bgpGraphBlock);
+        mermaid.init();
+    }
 }
 
 function queryStatus() {
@@ -210,7 +298,26 @@ function queryStatus() {
     // TODO handle .catch
 }
 
+function validateRouterSelect() {
+    // check if the router placeholder is selected
+    var form = document.querySelector("#lg-query-form");
+    var formSelectRouter = form.querySelector("#lg-query-router")
+    if (formSelectRouter.value == "-") {
+        formSelectRouter.setCustomValidity("Please select a router.");
+        return;
+    } else {
+        formSelectRouter.setCustomValidity("");
+    }
+}
+
 function queryPrefix() {
+    // check the form validity
+    validateRouterSelect();
+    var form = document.querySelector("#lg-query-form");
+    if (!form.reportValidity()) {
+        return;
+    }
+
     // disable request on hash change (will be enabled in displayPrefix when the response has arrived)
     window.onhashchange = function(){ return; }
 
@@ -249,11 +356,18 @@ function queryPrefix() {
 
     // display a link to raw JSON output
     if (lgSettings.routeinfoAPI.showAPILink) {
-        var apiLinkTemplate = document.querySelector("#lg-template-api-link");
-        var apiLink = document.importNode(apiLinkTemplate.content, true);
-        apiLink.querySelector("#lg-api-link").href = url;
-        var querySection = document.querySelector("#lg-query-block");
-        querySection.appendChild(apiLink);
+        // check if an old link exists and remove it
+        var lastAPILink = document.querySelector("#lg-query-block").querySelector("#lg-api-link-block");
+        if (lastAPILink) {
+            lastAPILink.href = url;
+        } else {
+            // copy the template and set the right URL
+            var apiLinkTemplate = document.querySelector("#lg-template-api-link");
+            var apiLink = document.importNode(apiLinkTemplate.content, true);
+            apiLink.querySelector("#lg-api-link").href = url;
+            var querySection = document.querySelector("#lg-query-block");
+            querySection.appendChild(apiLink);
+        }
     }
 }
 
@@ -276,11 +390,7 @@ function loadQuery() {
         routerSelectElement.value = "";
     }
 
-    //queryPrefix();
-    var form = document.querySelector("#lg-query-form");
-    if (form.reportValidity()) {
-        queryPrefix();
-    }
+    queryPrefix();
     window.onhashchange = loadQuery;
 }
 
