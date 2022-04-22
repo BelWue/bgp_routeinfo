@@ -282,7 +282,8 @@ function displayPrefix(data, container) {
         var bgpGraphBlock = document.importNode(bgpGraphTemplate.content, true);
         var bgpGraph = bgpGraphBlock.querySelector("#lg-bgp-graph");
         bgpGraph.textContent = prefixResultsToGraph(data.results);
-        resultBlock.appendChild(bgpGraphBlock);
+        var bgpGraphContainer = resultBlock.querySelector("#lg-result-bgp-graph");
+        bgpGraphContainer.appendChild(bgpGraphBlock);
         mermaid.init();
     }
 }
