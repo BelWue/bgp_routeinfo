@@ -4,6 +4,7 @@
     <title>BelWü :: Route-Server</title>
     <meta charset="utf-8">
     <meta name="title" content="Looking Glass">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js" defer></script>
     <script src="config.js" defer></script>
     <script src="lookingglass.js" defer></script>
     <link rel="stylesheet" href="style.css">
@@ -37,9 +38,7 @@
       </div>
     </template>
     <template id="lg-template-path">
-      <p id="lg-path" class="lg-path">
-        <span id="lg-path-aspath" class="lg-path-aspath"></span><br><span id="lg-path-nexthop" class="lg-path-nexthop"></span><br><span id="lg-path-metrics" class="lg-path-metrics"></span><br><span id="lg-path-tags" class="lg-path-tags"></span>
-      </p>
+      <p id="lg-path" class="lg-path"><span id="lg-path-aspath" class="lg-path-aspath"></span><br><span id="lg-path-nexthop" class="lg-path-nexthop"></span><br><span id="lg-path-metrics" class="lg-path-metrics"></span><br><span id="lg-path-tags" class="lg-path-tags"></span></p>
     </template>
     <template id="lg-template-tag">
       <span id="lg-tag" class="lg-tag"></span>
@@ -47,6 +46,12 @@
     <template id="lg-template-api-link">
       <div id="lg-api-link-block" class="lg-api-link-block">
         <a id="lg-api-link" class="lg-api-link" alt="JSON API Link" target="_blank">Result as raw JSON &#128279;</a>
+      </div>
+    </template>
+    <template id="lg-template-bgp-graph">
+      <div id="lg-bgp-graph-block" class="lg-bgp-graph-block">
+        <h2 id="lg-bgp-graph-info" class="lg-bgp-graph-info">BGP Graph</h2>
+        <div id="lg-bgp-graph" class="mermaid"></div>
       </div>
     </template>
   </body>

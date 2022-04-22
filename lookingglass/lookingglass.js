@@ -5,7 +5,7 @@
 var statusURL = lgSettings.routeinfoAPI.URL + "/status";
 var prefixURL = lgSettings.routeinfoAPI.URL + "/prefix";
 
-// RFC 6811 
+// RFC 6811
 var validityMapping = {
     0: "Valid",
     1: "NotFound",
@@ -175,6 +175,83 @@ function addPrefixResult(result, container) {
     container.appendChild(clone);
 }
 
+function prefixResultsToGraph(results) {
+    var localName = lgSettings.graph.localASName;
+
+    // build a list with all connections between any two AS
+    var pathElements = [];
+    results.forEach(function(router){
+        router.paths.forEach(function(path){
+            // empty paths are returned as null instead of empty array
+            var pathlen = 0;
+            if (path.aspath && path.aspath.length) {
+                pathlen = path.aspath.length;
+            }
+
+            if (pathlen == 0) {
+                // loop to self ("local")
+                if (lgSettings.graph.drawLocalAsLoop) {
+                    pathElements.push({
+                        "best": path.best,
+                        "from": localName,
+                        "to": localName
+                    });
+                }
+            } else {
+                // arrow to first element
+                pathElements.push({
+                    "best": path.best,
+                    "from": localName,
+                    "to": path.aspath[0]
+                });
+            }
+
+            // arrows for all following aspath elements
+            for (let i = 0; i < (pathlen - 1); i++) {
+                if (path.aspath[i] == path.aspath[i+1] && !lgSettings.graph.drawPrepends) {
+                    // don't draw prepended paths with loops
+                    continue;
+                }
+                pathElements.push({
+                    "best": path.best,
+                    "from": path.aspath[i],
+                    "to": path.aspath[i+1]
+                });
+            }
+        });
+    });
+
+    // deduplicate paths
+    var deduplicatedPaths = [];
+    for (const path of pathElements) {
+        var found = false;
+        for (const dedupedPath of deduplicatedPaths) {
+            if ((path.from == dedupedPath.from) && (path.to == dedupedPath.to)) {
+                // path is already in deduplicatedPaths
+                // set best == true if one of them was marked best
+                dedupedPath.best = dedupedPath.best || path.best;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            deduplicatedPaths.push(path);
+        }
+    }
+
+    // build graph definition in text form
+    graphDefinition = `flowchart LR\n  ${localName}`;
+    deduplicatedPaths.forEach(function(path){
+        // dashed arrow by default, normal arrow for best path
+        var arrow = "-.->";
+        if (path.best) {
+            arrow = "-->";
+        }
+        graphDefinition += `\n  ${path.from} ${arrow} ${path.to}`;
+    });
+    return graphDefinition;
+}
+
 function displayPrefix(data, container) {
     // activate loading queries on hash change (gets disabled before on new queries)
     window.onhashchange = loadQuery;
@@ -198,6 +275,16 @@ function displayPrefix(data, container) {
 
     // append the block to the container
     container.appendChild(clone);
+
+    // BGP graph
+    if (lgSettings.graph.enabled) {
+        var bgpGraphTemplate = document.querySelector("#lg-template-bgp-graph")
+        var bgpGraphBlock = document.importNode(bgpGraphTemplate.content, true);
+        var bgpGraph = bgpGraphBlock.querySelector("#lg-bgp-graph");
+        bgpGraph.textContent = prefixResultsToGraph(data.results);
+        resultBlock.appendChild(bgpGraphBlock);
+        mermaid.init();
+    }
 }
 
 function queryStatus() {

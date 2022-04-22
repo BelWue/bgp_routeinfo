@@ -4,8 +4,10 @@ lgSettings = {
         "showAPILink": true,  // show "link to raw JSON result"
     },
     "graph": {
-        "enabled": true,  // render a BGP tree (requires mermaid.js)
-        "localASName": "My Network"  // display name of your AS
+        "enabled": true,  // render a BGP tree - requires mermaid.js loaded!
+        "localASName": "My Network",  // display name of your AS
+        "drawLocalAsLoop": true,  // for empty AS-Paths (local) draw a loop-arrow from $localASName to itself
+        "drawPrepends": false  // draw looping arrows when a path is prepended
     },
     "tags": {
         // additional data for tags
