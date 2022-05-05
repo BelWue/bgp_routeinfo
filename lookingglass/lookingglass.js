@@ -358,14 +358,14 @@ function queryPrefix() {
     // display a link to raw JSON output
     if (lgSettings.routeinfoAPI.showAPILink) {
         // check if an old link exists and remove it
-        var lastAPILink = document.querySelector("#lg-query-block").querySelector("#lg-api-link-block");
-        if (lastAPILink) {
-            lastAPILink.href = url;
+        var lastAPILinkBlock = document.querySelector("#lg-query-block").querySelector("#lg-api-link-block");
+        if (lastAPILinkBlock) {
+            lastAPILinkBlock.querySelector("#lg-api-link").href = url.href;
         } else {
             // copy the template and set the right URL
             var apiLinkTemplate = document.querySelector("#lg-template-api-link");
             var apiLink = document.importNode(apiLinkTemplate.content, true);
-            apiLink.querySelector("#lg-api-link").href = url;
+            apiLink.querySelector("#lg-api-link").href = url.href;
             var querySection = document.querySelector("#lg-query-block");
             querySection.appendChild(apiLink);
         }
