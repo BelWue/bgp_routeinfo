@@ -97,9 +97,18 @@ type Router struct {
 
 func (r *Router) Connect() {
 	for _, addr := range r.Neighbors {
+		// determine AFI
 		var parsed net.IP
-		if parsed = net.ParseIP(addr); parsed == nil {
+		var afi api.Family_Afi
+		if parsed = net.ParseIP(addr); parsed != nil {
+		} else {
 			log.Printf("[error] Invalid address: %s", addr)
+			continue
+		}
+		if addr4 := parsed.To4(); addr4 != nil {
+			afi = api.Family_AFI_IP
+		} else {
+			afi = api.Family_AFI_IP6
 		}
 
 		if err := r.GobgpServer.AddPeer(context.Background(), &api.AddPeerRequest{
@@ -108,6 +117,21 @@ func (r *Router) Connect() {
 					NeighborAddress: addr,
 					PeerAsn:         r.Asn,
 				},
+				// define the AFI manually to enable Add-Paths
+				AfiSafis: []*api.AfiSafi{&api.AfiSafi{
+					Config: &api.AfiSafiConfig{
+						Family: &api.Family{
+							Afi:  afi,
+							Safi: api.Family_SAFI_UNICAST,
+						},
+						Enabled: true,
+					},
+					AddPaths: &api.AddPaths{
+						Config: &api.AddPathsConfig{
+							Receive: true,
+						},
+					},
+				}},
 			},
 		}); err != nil {
 			log.Fatal(err)
