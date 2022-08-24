@@ -118,20 +118,22 @@ func (r *Router) Connect() {
 					PeerAsn:         r.Asn,
 				},
 				// define the AFI manually to enable Add-Paths
-				AfiSafis: []*api.AfiSafi{&api.AfiSafi{
-					Config: &api.AfiSafiConfig{
-						Family: &api.Family{
-							Afi:  afi,
-							Safi: api.Family_SAFI_UNICAST,
+				AfiSafis: []*api.AfiSafi{
+					&api.AfiSafi{
+						Config: &api.AfiSafiConfig{
+							Family: &api.Family{
+								Afi:  afi,
+								Safi: api.Family_SAFI_UNICAST,
+							},
+							Enabled: true,
 						},
-						Enabled: true,
-					},
-					AddPaths: &api.AddPaths{
-						Config: &api.AddPathsConfig{
-							Receive: true,
+						AddPaths: &api.AddPaths{
+							Config: &api.AddPathsConfig{
+								Receive: true,
+							},
 						},
 					},
-				}},
+				},
 			},
 		}); err != nil {
 			log.Fatal(err)
