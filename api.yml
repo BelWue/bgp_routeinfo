@@ -1,0 +1,183 @@
+---
+openapi: '3.0.0'
+info:
+  title: bgp_routeinfo HTTP API
+  version: '1.0.0'
+  description: |
+    The bgp_routeinfo daemon returns a looking-glass-style JSON response read from BGP directly.
+
+servers:
+  - url: https://lookingglass01.belwue.de/api
+    description: BelWü production server
+
+paths:
+  /status:
+    get:
+      summary: Get status information about the configured routers.
+      responses:
+        '200':
+          description: Status information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+        '500':
+          description: An error occurred while processing
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Error text
+                example: Something bad happened!
+
+  /prefix:
+    get:
+      summary: Get information about a given prefix from a given router.
+      parameters:
+        - in: query
+          name: prefix
+          schema:
+            type: string
+          required: true
+          description: IPv4 or IPv6 prefix to query information about
+        - in: query
+          name: router
+          schema:
+            type: array
+            items:
+              type: string
+          description: Names of routers to retrieve information from, defaults to all routers
+      responses:
+        '200':
+          description: Prefix information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Prefix'
+        '500':
+          description: An error occurred while processing
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Error text
+                example: Something bad happened!
+
+components:
+  schemas:
+    Status:
+      type: object
+      properties:
+        errors:
+          description: Error texts
+          nullable: true
+          type: array
+          example: null
+          items:
+            type: string
+            example: Something bad happened!
+        results:
+          description: Available routers
+          type: array
+          items:
+            type: object
+            properties:
+              router:
+                description: Name of the router
+                type: string
+                example: my-fancy-router
+              ready:
+                description: Whether this router is currently usable
+                type: boolean
+
+    Prefix:
+      type: object
+      properties:
+        errors:
+          description: Error texts
+          nullable: true
+          type: array
+          example: null
+          items:
+            type: string
+            example: Something bad happened!
+        results:
+          description: Route information returned from each specified router
+          type: array
+          items:
+            type: object
+            properties:
+              router:
+                description: Name of the router that returned this data
+                type: string
+                example: my-fancy-router
+              prefix:
+                description: Matched prefix
+                type: string
+                example: 1.2.3.4
+              paths:
+                description: Paths to the prefix
+                type: array
+                items:
+                  type: object
+                  properties:
+                    aspath:
+                      description: Hops to the AS
+                      type: array
+                      items:
+                        type: integer
+                        example: 1234
+                    communities:
+                      description: Communities this path is in
+                      type: array
+                      nullable: true
+                      items:
+                        type: string
+                        example: "123:456"
+                    largecommunities:
+                      description: Large communities this path is in
+                      type: array
+                      nullable: true
+                      items:
+                        type: string
+                        example: "123:456"
+                    localpref:
+                      description: Local pref of the path
+                      type: integer
+                      example: 100
+                    med:
+                      description: Med value of the path
+                      type: integer
+                      example: 1000
+                    nexthop:
+                      description: Next hop
+                      type: string
+                      example: 1.2.3.4
+                    originas:
+                      description: AS this path originates from
+                      type: integer
+                      example: 1234
+                    origin:
+                      description: Origin of the path
+                      type: integer
+                      example: 0
+                    peer:
+                      description: Peer of the path
+                      type: string
+                      example: 1.2.3.4
+                    prefix:
+                      description: Prefix of this path
+                      type: string
+                      example: 1.2.3.0/24
+                    timestamp:
+                      description: Timestamp when the prefix was learned
+                      type: string
+                      example: 2022-09-15T21:57:52Z
+                    validation:
+                      description: Validation lookup result (0 → valid, 1 → not found, 1 → invalid)
+                      type: integer
+                      example: 0
+                      enum:
+                        - 0
+                        - 1
+                        - 2
