@@ -3,7 +3,7 @@ module github.com/BelWue/bgp_routeinfo
 go 1.18
 
 require (
-	github.com/osrg/gobgp/v3 v3.6.0
+	github.com/osrg/gobgp/v3 v3.7.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
