@@ -7,10 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"log"
-
+	"github.com/BelWue/bgp_routeinfo/log"
 	api "github.com/osrg/gobgp/v3/api"
-	gobgplog "github.com/osrg/gobgp/v3/pkg/log"
 	"github.com/osrg/gobgp/v3/pkg/server"
 )
 
@@ -18,10 +16,11 @@ type RouteInfoServer struct {
 	Asn      uint32             `yaml:"asn"`
 	RouterId string             `yaml:"routerid"`
 	Routers  map[string]*Router `yaml:"routers"`
+	Logger   log.RouteinfoLogger
 }
 
 func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
-	server := server.NewBgpServer(server.LoggerOption(&silentLogger{}))
+	server := server.NewBgpServer(server.LoggerOption(rs.Logger.GetBgpLogger()))
 	go server.Serve()
 
 	if rs.RouterId == "" {
@@ -36,7 +35,7 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 			ListenPort: -1, // gobgp won't listen on tcp:179
 		},
 	}); err != nil {
-		log.Fatal(err)
+		rs.Logger.GetApplicationLogger().Fatalf("%e", err)
 	}
 
 	server.WatchEvent(context.Background(), &api.WatchEventRequest{Peer: &api.WatchEventRequest_Peer{}}, func(r *api.WatchEventResponse) {
@@ -49,7 +48,7 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 			router.neighborSessionStateLock.Lock()
 			router.neighborSessionState[peer.NeighborAddress] = peer.SessionState
 			router.neighborSessionStateLock.Unlock()
-			log.Printf("[info] Peer %d/%s is in state '%s'", peer.PeerAsn, peer.NeighborAddress, peer.SessionState)
+			rs.Logger.GetApplicationLogger().Infof("Peer %d/%s is in state '%s'", peer.PeerAsn, peer.NeighborAddress, peer.SessionState)
 		}
 	})
 
@@ -58,8 +57,9 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 
 func (rs *RouteInfoServer) Init() {
 	for name, router := range rs.Routers {
+		rs.Logger = &log.DefaultRouteInfoLogger{}
 		if len(router.Neighbors) == 0 {
-			log.Fatalf("[error] unconfigured router %s\n", name)
+			rs.Logger.GetApplicationLogger().Fatalf("unconfigured router %s\n", name)
 		}
 		if router.Asn == 0 {
 			router.Asn = rs.Asn
@@ -70,7 +70,7 @@ func (rs *RouteInfoServer) Init() {
 		if router.neighborSessionState == nil {
 			router.neighborSessionState = make(map[string]api.PeerState_SessionState)
 		}
-		router.Connect()
+		router.Connect(rs.Logger.GetApplicationLogger())
 	}
 }
 
@@ -95,14 +95,14 @@ type Router struct {
 	GobgpServer              *server.BgpServer
 }
 
-func (r *Router) Connect() {
+func (r *Router) Connect(log log.ApplicationLogger) {
 	for _, addr := range r.Neighbors {
 		// determine AFI
 		var parsed net.IP
 		var afi api.Family_Afi
 		if parsed = net.ParseIP(addr); parsed != nil {
 		} else {
-			log.Printf("[error] Invalid address: %s", addr)
+			log.Errorf("Invalid address: %s", addr)
 			continue
 		}
 		if addr4 := parsed.To4(); addr4 != nil {
@@ -111,38 +111,41 @@ func (r *Router) Connect() {
 			afi = api.Family_AFI_IP6
 		}
 
-		if err := r.GobgpServer.AddPeer(context.Background(), &api.AddPeerRequest{
-			Peer: &api.Peer{
-				Conf: &api.PeerConf{
-					NeighborAddress: addr,
-					PeerAsn:         r.Asn,
-				},
-				// define the AFI manually to enable Add-Paths
-				AfiSafis: []*api.AfiSafi{
-					&api.AfiSafi{
-						Config: &api.AfiSafiConfig{
-							Family: &api.Family{
-								Afi:  afi,
-								Safi: api.Family_SAFI_UNICAST,
-							},
-							Enabled: true,
+		if err := r.GobgpServer.AddPeer(context.Background(), GenerateAddPeerRequest(r, addr, afi)); err != nil {
+			log.Fatalf("%e", err)
+		}
+	}
+}
+
+func GenerateAddPeerRequest(r *Router, addr string, afi api.Family_Afi) *api.AddPeerRequest {
+	return &api.AddPeerRequest{
+		Peer: &api.Peer{
+			Conf: &api.PeerConf{
+				NeighborAddress: addr,
+				PeerAsn:         r.Asn,
+			},
+			// define the AFI manually to enable Add-Paths
+			AfiSafis: []*api.AfiSafi{
+				&api.AfiSafi{
+					Config: &api.AfiSafiConfig{
+						Family: &api.Family{
+							Afi:  afi,
+							Safi: api.Family_SAFI_UNICAST,
 						},
-						AddPaths: &api.AddPaths{
-							Config: &api.AddPathsConfig{
-								Receive: true,
-							},
+						Enabled: true,
+					},
+					AddPaths: &api.AddPaths{
+						Config: &api.AddPathsConfig{
+							Receive: true,
 						},
 					},
 				},
 			},
-		}); err != nil {
-			log.Fatal(err)
-		}
-
+		},
 	}
 }
 
-func (r *Router) LookupShorter(address string) []RouteInfo {
+func (r *Router) LookupShorter(address string, log log.ApplicationLogger) []RouteInfo {
 	if parsed := net.ParseIP(address); parsed != nil {
 		if addr4 := parsed.To4(); addr4 != nil {
 			address += "/32"
@@ -150,10 +153,10 @@ func (r *Router) LookupShorter(address string) []RouteInfo {
 			address += "/128"
 		}
 	}
-	return r.lookup(address, api.TableLookupPrefix_SHORTER)
+	return r.lookup(address, api.TableLookupPrefix_SHORTER, log)
 }
 
-func (r *Router) LookupLonger(address string) []RouteInfo {
+func (r *Router) LookupLonger(address string, log log.ApplicationLogger) []RouteInfo {
 	if parsed := net.ParseIP(address); parsed != nil {
 		if addr4 := parsed.To4(); addr4 != nil {
 			address += "/32"
@@ -161,21 +164,21 @@ func (r *Router) LookupLonger(address string) []RouteInfo {
 			address += "/128"
 		}
 	}
-	return r.lookup(address, api.TableLookupPrefix_LONGER)
+	return r.lookup(address, api.TableLookupPrefix_LONGER, log)
 }
 
-func (r *Router) Lookup(address string) []RouteInfo {
-	return r.lookup(address, api.TableLookupPrefix_EXACT)
+func (r *Router) Lookup(address string, logger log.ApplicationLogger) []RouteInfo {
+	return r.lookup(address, api.TableLookupPrefix_EXACT, logger)
 }
 
-func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) []RouteInfo {
+func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, log log.ApplicationLogger) []RouteInfo {
 	// determine AFI
 	var parsed net.IP
 	var afi api.Family_Afi
 	if parsed = net.ParseIP(address); parsed != nil {
 	} else if parsed, _, _ = net.ParseCIDR(address); parsed != nil {
 	} else {
-		log.Printf("[error] Invalid address: %s", address)
+		log.Warnf("Invalid address: %s", address)
 		return nil
 	}
 	if addr4 := parsed.To4(); addr4 != nil {
@@ -247,13 +250,13 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type) [
 			} else if err := pattr.UnmarshalTo(OriginatorId); err == nil { //not used
 				continue
 			} else {
-				log.Printf("[warning] Path attribute decode not implemented for this object: %+v\n", pattr)
+				log.Warnf("Path attribute decode not implemented for this object: %+v\n", pattr)
 			}
 		}
 
 		var Prefix = &api.IPAddressPrefix{}
 		if err := path.Nlri.UnmarshalTo(Prefix); err != nil {
-			log.Printf("[warning] No prefix found for this destination path: %+v\n", path)
+			log.Warnf("No prefix found for this destination path: %+v\n", path)
 		}
 
 		// decode nexthop
@@ -418,32 +421,4 @@ func (router *Router) WaitForEOR() {
 		time.Sleep(time.Second * 1)
 		_, ready = router.Status()
 	}
-}
-
-type silentLogger struct {
-}
-
-func (l *silentLogger) Panic(msg string, fields gobgplog.Fields) {
-}
-
-func (l *silentLogger) Fatal(msg string, fields gobgplog.Fields) {
-}
-
-func (l *silentLogger) Error(msg string, fields gobgplog.Fields) {
-}
-
-func (l *silentLogger) Warn(msg string, fields gobgplog.Fields) {
-}
-
-func (l *silentLogger) Info(msg string, fields gobgplog.Fields) {
-}
-
-func (l *silentLogger) Debug(msg string, fields gobgplog.Fields) {
-}
-
-func (l *silentLogger) SetLevel(level gobgplog.LogLevel) {
-}
-
-func (l *silentLogger) GetLevel() gobgplog.LogLevel {
-	return gobgplog.PanicLevel
 }
