@@ -29,9 +29,9 @@ func main() {
 
 	rs.Init() // try to establish all sessions
 
-	rs.Routers["router-1"].WaitForEOR() // block until ready
-
 	logger := log.ApplicationLoggerFromZerolog(&zerolog.Logger)
+
+	rs.Routers["router-1"].WaitForEOR(logger) // block until ready
 
 	// try a bunch of stuff
 	fmt.Println("Lookup 1.0.128.1:")

@@ -1,1 +1,3 @@
 config.yml
+cmd/routeinfo_server/routeinfo_server
+.vscode/launch.json

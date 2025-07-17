@@ -1,6 +1,9 @@
 package log
 
-import "github.com/rs/zerolog"
+import (
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
 
 type ApplicationLogger interface {
 	Debug(msg string)
@@ -14,6 +17,8 @@ type ApplicationLogger interface {
 	Infof(msg string, v ...interface{})
 	Errorf(msg string, v ...interface{})
 	Fatalf(msg string, v ...interface{})
+
+	SetLogLevel(level *string)
 }
 
 func ApplicationLoggerFromZerolog(logger *zerolog.Logger) ApplicationLogger {
@@ -55,4 +60,34 @@ func (l *ZerologApplicationLogger) Errorf(msg string, v ...interface{}) {
 }
 func (l *ZerologApplicationLogger) Fatalf(msg string, v ...interface{}) {
 	l.Log.Fatal().Msgf(msg, v...)
+}
+func (l *ZerologApplicationLogger) SetLogLevel(level *string) {
+	l.Log.Level(ZerologLogLevel(level))
+}
+
+func ZerologLogLevel(logLevel *string) zerolog.Level {
+	if logLevel != nil && *logLevel != "" {
+		switch *logLevel {
+		case "trace":
+			return zerolog.TraceLevel
+		case "debug":
+			return zerolog.DebugLevel
+		case "info":
+			return zerolog.InfoLevel
+		case "warning":
+			return zerolog.WarnLevel
+		case "error":
+			return zerolog.ErrorLevel
+		case "fatal":
+			return zerolog.FatalLevel
+		case "panic":
+			return zerolog.PanicLevel
+		default:
+			log.Warn().Msgf("Unknown log level '%s' returning default 'info'", *logLevel)
+		}
+	} else {
+		log.Info().Msg("Empty log level - Returning default log level 'info'")
+	}
+
+	return zerolog.InfoLevel
 }

@@ -46,14 +46,17 @@ func main() {
 	configfile := flag.String("c", "config.yml", "location of the config file in yml format")
 	jsonLogging := flag.Bool("j", false, "Json log")
 	endpoint := flag.String("e", ":3000", "Endpoint the service should listen/serve on")
-	logLevel := flag.String("l", "info", "Loglevel: one of 'debug', 'info', 'warning' or 'error'")
+	logLevelString := flag.String("l", "info", "Loglevel: one of 'debug', 'info', 'warning' or 'error'")
+	enableBgpLog := flag.Bool("enableBgpLog", false, "Enable log for gobgp")
 	flag.Parse()
 
 	if !*jsonLogging {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.DateTime})
 	}
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	zerolog.SetGlobalLevel(zerologLogLevel(logLevel))
+	logLevel := applog.ZerologLogLevel(logLevelString)
+	zerolog.SetGlobalLevel(logLevel)
+	log.Info().Msgf("Using log level %s", logLevel.String())
 
 	config, err := os.ReadFile(*configfile)
 	if err != nil {
@@ -66,6 +69,10 @@ func main() {
 		log.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
 
+	rs.InitLogger(logLevelString)
+	if !*enableBgpLog {
+		rs.Logger.DisableBgpLog()
+	}
 	rs.Init() // try to establish all sessions
 
 	// clean shutdown on ^C
@@ -163,34 +170,4 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 	writer.Write(body)
-}
-
-func zerologLogLevel(logLevel *string) zerolog.Level {
-	if logLevel != nil && *logLevel != "" {
-		switch *logLevel {
-		case "trace":
-			log.Info().Msg("Using log level 'trace'")
-			return zerolog.TraceLevel
-		case "debug":
-			log.Info().Msg("Using log level 'debug'")
-			return zerolog.DebugLevel
-		case "info":
-			log.Info().Msg("Using log level 'info'")
-			return zerolog.InfoLevel
-		case "warning":
-			return zerolog.WarnLevel
-		case "error":
-			return zerolog.ErrorLevel
-		case "fatal":
-			return zerolog.FatalLevel
-		case "panic":
-			return zerolog.PanicLevel
-		default:
-			log.Warn().Msgf("Unknown log level '%s' using default 'info'", *logLevel)
-		}
-	} else {
-		log.Info().Msg("Using default log level 'info'")
-	}
-
-	return zerolog.InfoLevel
 }
