@@ -1,7 +1,6 @@
 package log
 
 import (
-	gobgplog "github.com/osrg/gobgp/v4/pkg/log"
 	"github.com/rs/zerolog/log"
 	zerolog "github.com/rs/zerolog/log"
 )

@@ -1,7 +1,5 @@
 package log
 
-import gobgplog "github.com/osrg/gobgp/v4/pkg/log"
-
 type silentBGPLogger struct {
 }
 
