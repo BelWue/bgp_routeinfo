@@ -1,0 +1,52 @@
+name: test master and PRs
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    permissions:
+      contents: read
+      checks: write
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+        - os: ubuntu-latest
+          goos: linux
+    steps:
+    - name: checkout
+      uses: actions/checkout@v3
+
+    - name: setup go
+      uses: actions/setup-go@v5.3.0
+      with:
+        go-version: '1.23.2'
+
+    - name: test
+      run: go test ./...
+
+    - name: build
+      run: go build -o bgp_routeinfo -ldflags "-X main.Version=${{ github.sha }}" ./cmd/routeinfo_server
+
+    - name: save binary
+      uses: actions/upload-artifact@v4.6.0
+      with:
+        name: bgp_routeinfo-${{ matrix.goos }}
+        path: ./bgp_routeinfo
+        overwrite: true
+
+    - name: build statically linked
+      run: go build -o bgp_routeinfo-static -ldflags "-X main.Version=${{ github.sha }}"  ./cmd/routeinfo_server
+      env:
+        CGO_ENABLED: 0
+
+    - name: save statically linked binary
+      uses: actions/upload-artifact@v4.6.0
+      with:
+        name: bgp_routeinfo-${{ matrix.goos }}-static
+        path: ./bgp_routeinfo-static
+        overwrite: true
