@@ -3,12 +3,16 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	applog "github.com/BelWue/bgp_routeinfo/log"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/BelWue/bgp_routeinfo/routeinfo"
 	"gopkg.in/yaml.v2"
@@ -38,20 +42,37 @@ type PrefixResponse struct {
 var rs routeinfo.RouteInfoServer
 
 func main() {
+
 	configfile := flag.String("c", "config.yml", "location of the config file in yml format")
+	jsonLogging := flag.Bool("j", false, "Json log")
+	endpoint := flag.String("e", ":3000", "Endpoint the service should listen/serve on")
+	logLevelString := flag.String("l", "info", "Loglevel: one of 'debug', 'info', 'warning' or 'error'")
+	enableBgpLog := flag.Bool("enableBgpLog", false, "Enable log for gobgp")
 	flag.Parse()
 
-	config, err := ioutil.ReadFile(*configfile)
+	if !*jsonLogging {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.DateTime})
+	}
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	logLevel := applog.ZerologLogLevel(logLevelString)
+	zerolog.SetGlobalLevel(logLevel)
+	log.Info().Msgf("Using log level %s", logLevel.String())
+
+	config, err := os.ReadFile(*configfile)
 	if err != nil {
-		log.Printf("[error] reading config file: %s", err)
+		log.Error().Err(err).Msgf("reading config file: %s", *configfile)
 		return
 	}
 
 	err = yaml.Unmarshal(config, &rs)
 	if err != nil {
-		log.Fatalf("[error] Error parsing configuration YAML: %v", err)
+		log.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
 
+	rs.InitLogger(logLevelString)
+	if !*enableBgpLog {
+		rs.Logger.DisableBgpLog()
+	}
 	rs.Init() // try to establish all sessions
 
 	// clean shutdown on ^C
@@ -68,7 +89,10 @@ func main() {
 
 	http.HandleFunc("/prefix", prefix)
 	http.HandleFunc("/status", status)
-	http.ListenAndServe(":3000", nil)
+	err = http.ListenAndServe(*endpoint, nil)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("Failed to listen on %s", *endpoint)
+	}
 }
 
 func status(writer http.ResponseWriter, request *http.Request) {
@@ -121,7 +145,7 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 	for routerName, router := range routers {
 		var pr PrefixResult
 		pr.Router = routerName
-		pr.Paths = router.Lookup(qPrefix)
+		pr.Paths = router.Lookup(qPrefix, applog.ApplicationLoggerFromZerolog(&log.Logger))
 		if len(pr.Paths) > 0 {
 			pr.Prefix = pr.Paths[0].Prefix
 			for _, path := range pr.Paths[1:] {
@@ -138,6 +162,7 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		// can't really add error strings to the body here anymore...
 		http.Error(writer, err.Error(), http.StatusInternalServerError)
+		log.Error().Err(err).Msg("Http Request error")
 	}
 
 	writer.Header().Set("Content-Type", "application/json")

@@ -1,13 +1,15 @@
 package routeinfo
 
 import (
-	"io/ioutil"
-	"log"
 	"math/rand"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	applog "github.com/BelWue/bgp_routeinfo/log"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"gopkg.in/yaml.v2"
 )
@@ -18,14 +20,14 @@ var router *Router
 const addressCacheSize = 10000
 
 func init() {
-	config, err := ioutil.ReadFile("config.yml")
+	config, err := os.ReadFile("config.yml")
 	if err != nil {
-		log.Printf("[error] reading config file: %s", err)
+		log.Error().Err(err).Msg("Failed reading config file")
 		return
 	}
 	err = yaml.Unmarshal(config, &rs)
 	if err != nil {
-		log.Fatalf("[error] Error parsing configuration YAML: %v", err)
+		log.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
 	rs.Init()
 	for _, value := range rs.Routers {
@@ -50,7 +52,8 @@ func init() {
 
 func BenchmarkLookupIPv4Random(b *testing.B) {
 	// no logs to slow us down
-	log.SetOutput(ioutil.Discard)
+	zerolog.SetGlobalLevel(zerolog.Disabled)
+	logger := applog.ApplicationLoggerFromZerolog(&log.Logger)
 	os.Stdout, _ = os.Open(os.DevNull)
 	addresses := make([]string, addressCacheSize)
 	for n := 0; n < addressCacheSize; n++ {
@@ -60,13 +63,15 @@ func BenchmarkLookupIPv4Random(b *testing.B) {
 	// let's goooo
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		router.Lookup(addresses[n%addressCacheSize])
+		router.Lookup(addresses[n%addressCacheSize], logger)
 	}
 }
 
 func BenchmarkLookupIPv4Static(b *testing.B) {
 	// no logs to slow us down
-	log.SetOutput(ioutil.Discard)
+	zerolog.SetGlobalLevel(zerolog.Disabled)
+	logger := applog.ApplicationLoggerFromZerolog(&log.Logger)
+	zerolog.SetGlobalLevel(zerolog.Disabled)
 	os.Stdout, _ = os.Open(os.DevNull)
 	addresses := make([]string, addressCacheSize)
 	for n := 0; n < addressCacheSize; n++ {
@@ -76,13 +81,13 @@ func BenchmarkLookupIPv4Static(b *testing.B) {
 	// let's goooo
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		router.Lookup(addresses[n%addressCacheSize])
+		router.Lookup(addresses[n%addressCacheSize], logger)
 	}
 }
 
 func BenchmarkEstablished(b *testing.B) {
 	// no logs to slow us down
-	log.SetOutput(ioutil.Discard)
+	zerolog.SetGlobalLevel(zerolog.Disabled)
 	os.Stdout, _ = os.Open(os.DevNull)
 	for n := 0; n < b.N; n++ {
 		router.Established()
@@ -91,7 +96,7 @@ func BenchmarkEstablished(b *testing.B) {
 
 func BenchmarkStatus(b *testing.B) {
 	// no logs to slow us down
-	log.SetOutput(ioutil.Discard)
+	zerolog.SetGlobalLevel(zerolog.Disabled)
 	os.Stdout, _ = os.Open(os.DevNull)
 	for n := 0; n < b.N; n++ {
 		router.Status()
