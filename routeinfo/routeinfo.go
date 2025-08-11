@@ -357,8 +357,10 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, l
 		if extendedCommunities != nil {
 			for _, ec := range extendedCommunities.Communities {
 				validationExtended := ec.GetValidation()
-				valid = ValidationStatus(validationExtended.State)
-				break
+				if validationExtended != nil {
+					valid = ValidationStatus(validationExtended.State)
+					break
+				}
 			}
 		}
 
