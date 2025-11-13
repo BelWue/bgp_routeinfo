@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	applog "github.com/BelWue/bgp_routeinfo/log"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -36,6 +35,10 @@ func init() {
 		break
 	}
 
+	if router == nil {
+		log.Warn().Msg("No router initialized. Please check your config")
+	}
+
 	// wait for sessions to be established and in sync
 	time.Sleep(10 * time.Second)
 	for {
@@ -53,7 +56,6 @@ func init() {
 func BenchmarkLookupIPv4Random(b *testing.B) {
 	// no logs to slow us down
 	zerolog.SetGlobalLevel(zerolog.Disabled)
-	logger := applog.ApplicationLoggerFromZerolog(&log.Logger)
 	os.Stdout, _ = os.Open(os.DevNull)
 	addresses := make([]string, addressCacheSize)
 	for n := 0; n < addressCacheSize; n++ {
@@ -63,14 +65,13 @@ func BenchmarkLookupIPv4Random(b *testing.B) {
 	// let's goooo
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		router.Lookup(addresses[n%addressCacheSize], logger)
+		router.Lookup(addresses[n%addressCacheSize])
 	}
 }
 
 func BenchmarkLookupIPv4Static(b *testing.B) {
 	// no logs to slow us down
 	zerolog.SetGlobalLevel(zerolog.Disabled)
-	logger := applog.ApplicationLoggerFromZerolog(&log.Logger)
 	zerolog.SetGlobalLevel(zerolog.Disabled)
 	os.Stdout, _ = os.Open(os.DevNull)
 	addresses := make([]string, addressCacheSize)
@@ -81,7 +82,7 @@ func BenchmarkLookupIPv4Static(b *testing.B) {
 	// let's goooo
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		router.Lookup(addresses[n%addressCacheSize], logger)
+		router.Lookup(addresses[n%addressCacheSize])
 	}
 }
 

@@ -145,7 +145,7 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 	for routerName, router := range routers {
 		var pr PrefixResult
 		pr.Router = routerName
-		pr.Paths = router.Lookup(qPrefix, applog.ApplicationLoggerFromZerolog(&log.Logger))
+		pr.Paths = router.Lookup(qPrefix)
 		if len(pr.Paths) > 0 {
 			pr.Prefix = pr.Paths[0].Prefix
 			for _, path := range pr.Paths[1:] {
