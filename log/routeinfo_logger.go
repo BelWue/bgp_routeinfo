@@ -1,15 +1,17 @@
 package log
 
 import (
+	"log/slog"
+
 	"github.com/rs/zerolog/log"
 	zerolog "github.com/rs/zerolog/log"
 )
 
 type RouteinfoLogger interface {
-	SetBgpLogger(log gobgplog.Logger)
+	SetBgpLogger(log *slog.Logger)
 	SetApplicationLogger(log ApplicationLogger)
 
-	GetBgpLogger() gobgplog.Logger
+	GetBgpLogger() (*slog.Logger, *slog.LevelVar)
 	GetApplicationLogger() ApplicationLogger
 	SetLogLevel(logLevel *string)
 	DisableBgpLog()
@@ -17,7 +19,8 @@ type RouteinfoLogger interface {
 
 type DefaultRouteInfoLogger struct {
 	applicationLogger ApplicationLogger
-	bgpLogger         gobgplog.Logger
+	bgpLogger         *slog.Logger
+	bgpLoggerLevel    *slog.LevelVar
 }
 
 func (r *DefaultRouteInfoLogger) SetApplicationLogger(log ApplicationLogger) {
@@ -32,41 +35,52 @@ func (r *DefaultRouteInfoLogger) GetApplicationLogger() ApplicationLogger {
 	return r.applicationLogger
 }
 
-func (r *DefaultRouteInfoLogger) SetBgpLogger(log gobgplog.Logger) {
+func (r *DefaultRouteInfoLogger) SetBgpLogger(log *slog.Logger) {
 	r.bgpLogger = log
 }
 
-func (r *DefaultRouteInfoLogger) GetBgpLogger() gobgplog.Logger {
+func (r *DefaultRouteInfoLogger) GetBgpLogger() (*slog.Logger, *slog.LevelVar) {
 	if r.bgpLogger == nil {
-		r.bgpLogger = gobgplog.NewDefaultLogger()
+		r.bgpLogger = slog.Default()
 	}
-	return r.bgpLogger
+	if r.bgpLoggerLevel == nil {
+		l := &slog.LevelVar{}
+		l.Set(slog.LevelInfo)
+		r.bgpLoggerLevel = l
+	}
+	return r.bgpLogger, r.bgpLoggerLevel
 }
 
 func (r *DefaultRouteInfoLogger) SetLogLevel(logLevel *string) {
 	r.GetApplicationLogger().SetLogLevel(logLevel)
-	r.GetBgpLogger().SetLevel(GobgpLogLevel(logLevel))
+	if r.bgpLoggerLevel == nil {
+		r.bgpLoggerLevel = &slog.LevelVar{}
+	}
+	r.bgpLoggerLevel.Set(GobgpLogLevel(logLevel))
 }
 func (r *DefaultRouteInfoLogger) DisableBgpLog() {
-	r.bgpLogger = &silentBGPLogger{}
+	r.bgpLogger = slog.New(slog.DiscardHandler)
 }
-func GobgpLogLevel(logLevel *string) gobgplog.LogLevel {
+
+// slog doesnt support all levels of zerolog.
+// This method returns the closest available setting
+func GobgpLogLevel(logLevel *string) slog.Level {
 	if logLevel != nil && *logLevel != "" {
 		switch *logLevel {
 		case "trace":
-			return gobgplog.TraceLevel
+			return slog.LevelDebug
 		case "debug":
-			return gobgplog.DebugLevel
+			return slog.LevelDebug
 		case "info":
-			return gobgplog.InfoLevel
+			return slog.LevelInfo
 		case "warning":
-			return gobgplog.WarnLevel
+			return slog.LevelWarn
 		case "error":
-			return gobgplog.ErrorLevel
+			return slog.LevelError
 		case "fatal":
-			return gobgplog.FatalLevel
+			return slog.LevelError
 		case "panic":
-			return gobgplog.PanicLevel
+			return slog.LevelError
 		default:
 			log.Warn().Msgf("Unknown log level '%s' returning default 'info'", *logLevel)
 		}
@@ -74,5 +88,5 @@ func GobgpLogLevel(logLevel *string) gobgplog.LogLevel {
 		log.Info().Msg("Empty log level - Returning default log level 'info'")
 	}
 
-	return gobgplog.InfoLevel
+	return slog.LevelInfo
 }

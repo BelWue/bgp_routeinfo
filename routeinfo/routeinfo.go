@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,7 +26,9 @@ type RouteInfoServer struct {
 
 func (rs *RouteInfoServer) InitLogger(logLevel *string) {
 	rs.Logger = &log.DefaultRouteInfoLogger{}
-	rs.SetLogLevel(logLevel)
+	if logLevel != nil {
+		rs.SetLogLevel(logLevel)
+	}
 }
 
 func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
@@ -52,7 +56,7 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 	callbacks := server.WatchEventMessageCallbacks{}
 	callbacks.OnPeerUpdate = func(r *apiutil.WatchEventMessage_PeerEvent, t time.Time) {
 		peer := r.Peer.State
-		if len(peer.NeighborAddress) == 0 {
+		if peer.NeighborAddress.BitLen() == 0 {
 			// I don't know why this happens, but I don't want it logged.
 			return
 		}
@@ -182,7 +186,7 @@ func (r *Router) LookupShorter(address string, log log.ApplicationLogger) []Rout
 			address += "/128"
 		}
 	}
-	return r.lookup(address, api.TableLookupPrefix_TYPE_SHORTER, log)
+	return r.lookup(address, apiutil.LOOKUP_SHORTER, log)
 }
 
 func (r *Router) LookupLonger(address string, log log.ApplicationLogger) []RouteInfo {
@@ -193,7 +197,7 @@ func (r *Router) LookupLonger(address string, log log.ApplicationLogger) []Route
 			address += "/128"
 		}
 	}
-	return r.lookup(address, api.TableLookupPrefix_TYPE_LONGER, log)
+	return r.lookup(address, apiutil.LOOKUP_SHORTER, log)
 }
 
 func (r *Router) Lookup(address string, logger log.ApplicationLogger) []RouteInfo {
@@ -201,11 +205,11 @@ func (r *Router) Lookup(address string, logger log.ApplicationLogger) []RouteInf
 	return r.lookup(address, 0, logger)
 }
 
-func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, log log.ApplicationLogger) []RouteInfo {
+func (r *Router) lookup(address string, lookupType apiutil.LookupOption, log log.ApplicationLogger) []RouteInfo {
 	// determine AFI
 	var (
 		parsed net.IP
-		afi    api.Family_Afi
+		family bgp.Family
 		err    error
 		// subnet *net.IPNet
 	)
@@ -223,122 +227,124 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, l
 	}
 
 	if addr4 := parsed.To4(); addr4 != nil {
-		afi = api.Family_AFI_IP
+		family = bgp.RF_IPv4_UC
 		// if subnet == nil {
 		// 	address += "/32"
 		// }
 	} else {
-		afi = api.Family_AFI_IP6
+		family = bgp.RF_IPv6_UC
 		// if subnet == nil {
 		// 	address += "/128"
 		// }
 	}
 
 	// build request
-	family := &api.Family{Afi: afi, Safi: api.Family_SAFI_UNICAST}
-	prefix := &api.TableLookupPrefix{Prefix: address, Type: lookupType}
-	req := &api.ListPathRequest{
-		TableType: api.TableType_TABLE_TYPE_GLOBAL,
-		Family:    family,
-		Prefixes:  []*api.TableLookupPrefix{prefix},
+	prefixIn := &apiutil.LookupPrefix{
+		Prefix:       address,
+		LookupOption: lookupType,
 	}
 
-	log.Infof("Request %v for router %v", req, r)
-
 	// get answer
-	var destination *api.Destination
-	err = r.GobgpServer.ListPath(context.Background(), req, func(d *api.Destination) {
-		log.Info("return function called")
-		destination = d
+	var (
+		pr *bgp.NLRI
+		pa *[]*apiutil.Path
+	)
+	err = r.GobgpServer.ListPath(apiutil.ListPathRequest{
+		TableType: api.TableType_TABLE_TYPE_GLOBAL,
+		Family:    family,
+		Prefixes:  []*apiutil.LookupPrefix{prefixIn},
+	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
+		//debug
+		log.Info(prefix.String())
+		for _, p := range paths {
+			log.Debug("Returned path: peer_asn = " + string(p.PeerASN) + ", peer_address: " + p.PeerAddress.String() + ", age: " + string(p.Age) + ", best: " + strconv.FormatBool(p.Best))
+		}
+		pr = &prefix
+		pa = &paths
 	})
+	if err != nil {
+		log.Errorf("failed to list path due to %v", err)
+	}
 
 	if err != nil {
 		log.Errorf("Failed listing path due to %v", err)
 	}
 
 	// no answer here
-	if destination == nil {
+	pre := ""
+	if pr == nil {
+		log.Warnf("No prefix returned for %s.", address)
+	} else {
+		pre = (*pr).String()
+	}
+	if pa == nil {
 		log.Warnf("No destination returned for %s.", address)
 		return nil
 	}
 
 	// generate a result per path returned
 	var results []RouteInfo
-	for _, path := range destination.Paths {
-		var prefix = path.GetNlri().GetPrefix()
-		if prefix == nil {
-			log.Warnf("No prefix found for this destination path: %+v\n", path)
-			prefix = &api.IPAddressPrefix{
-				PrefixLen: 7,
-				Prefix:    "unknown",
-			}
-		}
-
+	for _, path := range *pa {
 		var (
-			nexthopSting        string
-			nexthop             *api.NextHopAttribute
-			mpReach             *api.MpReachNLRIAttribute
-			asPath              *api.AsPathAttribute
-			community           *api.CommunitiesAttribute
-			origin              *api.OriginAttribute
-			multiExitDisc       *api.MultiExitDiscAttribute
-			localPref           *api.LocalPrefAttribute
-			largeCommunities    *api.LargeCommunitiesAttribute
-			extendedCommunities *api.ExtendedCommunitiesAttribute
+			nexthop             *netip.Addr
+			mpReach             *bgp.PathAttributeMpReachNLRI
+			asPath              *[]bgp.AsPathParamInterface
+			communities         *[]uint32
+			origin              *uint8
+			multiExitDisc       *uint32
+			localPref           *uint32
+			largeCommunities    *[]*bgp.LargeCommunity
+			extendedCommunities *[]bgp.ExtendedCommunityInterface
 			aspathNbrs          []uint32
 			communityNames      []string
 			largecommunityNames []string
+
+			nexthopString string
 		)
 
-		for _, pattrn := range path.Pattrs {
-			switch a := pattrn.Attr.(type) {
-			case *api.Attribute_NextHop:
-				nexthop = a.NextHop
-			case *api.Attribute_MpReach:
-				mpReach = a.MpReach
-			case *api.Attribute_AsPath:
-				asPath = a.AsPath
-			case *api.Attribute_Communities:
-				community = a.Communities
-			case *api.Attribute_Origin:
-				origin = a.Origin
-			case *api.Attribute_MultiExitDisc:
-				multiExitDisc = a.MultiExitDisc
-			case *api.Attribute_LocalPref:
-				localPref = a.LocalPref
-			case *api.Attribute_LargeCommunities:
-				largeCommunities = a.LargeCommunities
-			case *api.Attribute_ExtendedCommunities:
-				extendedCommunities = a.ExtendedCommunities
+		for _, a := range path.Attrs {
+			switch a.GetType() {
+			case bgp.BGP_ATTR_TYPE_NEXT_HOP:
+				nexthop = &a.(*bgp.PathAttributeNextHop).Value
+			case bgp.BGP_ATTR_TYPE_MP_REACH_NLRI:
+				mpReach = a.(*bgp.PathAttributeMpReachNLRI)
+			case bgp.BGP_ATTR_TYPE_AS_PATH:
+				asPath = &a.(*bgp.PathAttributeAsPath).Value
+			case bgp.BGP_ATTR_TYPE_COMMUNITIES:
+				communities = &a.(*bgp.PathAttributeCommunities).Value
+			case bgp.BGP_ATTR_TYPE_ORIGIN:
+				origin = &a.(*bgp.PathAttributeOrigin).Value
+			case bgp.BGP_ATTR_TYPE_MULTI_EXIT_DISC:
+				multiExitDisc = &a.(*bgp.PathAttributeMultiExitDisc).Value
+			case bgp.BGP_ATTR_TYPE_LOCAL_PREF:
+				localPref = &a.(*bgp.PathAttributeLocalPref).Value
+			case bgp.BGP_ATTR_TYPE_LARGE_COMMUNITY:
+				largeCommunities = &a.(*bgp.PathAttributeLargeCommunities).Values
+			case bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES:
+				extendedCommunities = &a.(*bgp.PathAttributeExtendedCommunities).Value
 			}
 		}
 
-		nextHopSet := false
 		if nexthop != nil {
-			if nexthop.NextHop != "" {
-				nexthopSting = nexthop.NextHop
-				nextHopSet = true
-			}
+			log.Info("From nexthop")
+			nexthopString = nexthop.String()
 		} else if mpReach != nil {
-			if len(mpReach.NextHops) > 0 {
-				nexthopSting = mpReach.NextHops[0]
-				nextHopSet = true
-			}
-		}
-		if !nextHopSet {
-			nexthopSting = "N/A"
+			log.Info("From mpReach")
+			nexthopString = mpReach.Nexthop.String()
+		} else {
+			nexthopString = "N/A"
 		}
 
 		// decode aspath
 		if asPath != nil {
-			for _, segment := range asPath.Segments {
-				aspathNbrs = append(aspathNbrs, segment.Numbers...)
+			for _, segment := range *asPath {
+				aspathNbrs = append(aspathNbrs, segment.GetAS()...)
 			}
 		}
 
 		// decode communities
-		if community != nil {
-			for _, community := range community.Communities {
+		if communities != nil {
+			for _, community := range *communities {
 				front := community >> 16
 				back := community & 0xffff
 				communityNames = append(communityNames, fmt.Sprintf("%d:%d", front, back))
@@ -347,24 +353,28 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, l
 
 		// decode large communities
 		if largeCommunities != nil {
-			for _, community := range largeCommunities.Communities {
-				largecommunityNames = append(largecommunityNames, fmt.Sprintf("%d:%d:%d", community.GlobalAdmin, community.LocalData1, community.LocalData2))
+			for _, community := range *largeCommunities {
+				largecommunityNames = append(
+					largecommunityNames,
+					community.String(),
+				)
 			}
 		}
 
 		// partly decode extended communities
-		var valid = ValidationStatus(255)
+		valid := bgp.VALIDATION_STATE_NOT_FOUND
 		if extendedCommunities != nil {
-			for _, ec := range extendedCommunities.Communities {
-				validationExtended := ec.GetValidation()
-				valid = ValidationStatus(validationExtended.State)
-				break
+			for _, ec := range *extendedCommunities {
+				if val, ok := ec.(*bgp.ValidationExtended); ok {
+					valid = val.State
+					break
+				}
 			}
 		}
 
 		var originValue = OriginValue(255)
 		if origin != nil {
-			originValue = OriginValue(origin.Origin)
+			originValue = OriginValue(*origin)
 		}
 
 		var originAS uint32
@@ -379,10 +389,10 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, l
 			med             uint32
 		)
 		if localPref != nil {
-			localPrefResult = localPref.LocalPref
+			localPrefResult = *localPref
 		}
 		if multiExitDisc != nil {
-			med = multiExitDisc.Med
+			med = *multiExitDisc
 		}
 
 		result := RouteInfo{
@@ -392,38 +402,17 @@ func (r *Router) lookup(address string, lookupType api.TableLookupPrefix_Type, l
 			LargeCommunities: largecommunityNames,
 			LocalPref:        localPrefResult,
 			Med:              med,
-			NextHop:          nexthopSting,
+			NextHop:          nexthopString,
 			OriginAs:         originAS,
 			Origin:           originValue,
-			Peer:             path.NeighborIp,
-			Prefix:           fmt.Sprintf("%s/%d", prefix.Prefix, prefix.PrefixLen),
-			Timestamp:        path.Age.AsTime(),
+			Peer:             path.PeerAddress.String(),
+			Prefix:           pre,
+			Timestamp:        time.Unix(path.Age, 0),
 			Validation:       valid,
 		}
 		results = append(results, result)
 	}
 	return results
-}
-
-type ValidationStatus uint8
-
-const (
-	Valid ValidationStatus = iota
-	NotFound
-	Invalid
-)
-
-func (v ValidationStatus) String() string {
-	switch v {
-	case Valid:
-		return "Valid"
-	case NotFound:
-		return "NotFound"
-	case Invalid:
-		return "Invalid"
-	default:
-		return "Unknown"
-	}
 }
 
 type OriginValue uint8
@@ -448,19 +437,19 @@ func (v OriginValue) String() string {
 }
 
 type RouteInfo struct {
-	AsPath           []uint32         `json:"aspath"`
-	Best             bool             `json:"best"`
-	Communities      []string         `json:"communities"`
-	LargeCommunities []string         `json:"largecommunities"`
-	LocalPref        uint32           `json:"localpref"`
-	Med              uint32           `json:"med"`
-	NextHop          string           `json:"nexthop"`
-	OriginAs         uint32           `json:"originas"`
-	Origin           OriginValue      `json:"origin"`
-	Peer             string           `json:"peer"`
-	Prefix           string           `json:"prefix"`
-	Timestamp        time.Time        `json:"timestamp"`
-	Validation       ValidationStatus `json:"validation"`
+	AsPath           []uint32            `json:"aspath"`
+	Best             bool                `json:"best"`
+	Communities      []string            `json:"communities"`
+	LargeCommunities []string            `json:"largecommunities"`
+	LocalPref        uint32              `json:"localpref"`
+	Med              uint32              `json:"med"`
+	NextHop          string              `json:"nexthop"`
+	OriginAs         uint32              `json:"originas"`
+	Origin           OriginValue         `json:"origin"`
+	Peer             string              `json:"peer"`
+	Prefix           string              `json:"prefix"`
+	Timestamp        time.Time           `json:"timestamp"`
+	Validation       bgp.ValidationState `json:"validation"`
 }
 
 func (router *Router) Status() (bool, bool) {
