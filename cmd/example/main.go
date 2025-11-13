@@ -26,27 +26,26 @@ func main() {
 	if err != nil {
 		zerolog.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
-
+	logger := log.ApplicationLoggerFromZerolog(&zerolog.Logger)
+	rs.Logger.SetApplicationLogger(logger)
 	rs.Init() // try to establish all sessions
 
-	logger := log.ApplicationLoggerFromZerolog(&zerolog.Logger)
-
-	rs.Routers["router-1"].WaitForEOR(logger) // block until ready
+	rs.Routers["router-1"].WaitForEOR() // block until ready
 
 	// try a bunch of stuff
 	fmt.Println("Lookup 1.0.128.1:")
-	result := rs.Routers["router-1"].Lookup("1.0.128.1", logger)
+	result := rs.Routers["router-1"].Lookup("1.0.128.1")
 	fmt.Printf("  %+v\n", result)
 	fmt.Println("Lookup 8.8.8.8/32:")
-	result = rs.Routers["router-1"].Lookup("8.8.8.8/32", logger)
+	result = rs.Routers["router-1"].Lookup("8.8.8.8/32")
 	fmt.Printf("  %+v\n", result)
 	fmt.Println("Lookup 2001:4860:4860::8844:")
-	result = rs.Routers["router-1"].Lookup("2001:4860:4860::8844", logger)
+	result = rs.Routers["router-1"].Lookup("2001:4860:4860::8844")
 	fmt.Printf("  %+v\n", result)
 	fmt.Println("LookupShorter 8.7.235.0/23:")
-	result = rs.Routers["router-1"].LookupShorter("8.7.235.0/23", logger)
+	result = rs.Routers["router-1"].LookupShorter("8.7.235.0/23")
 	fmt.Printf("  %+v\n", result)
 	fmt.Println("LookupShorter 8.8.8.8:")
-	result = rs.Routers["router-1"].LookupShorter("8.8.8.8", logger)
+	result = rs.Routers["router-1"].LookupShorter("8.8.8.8")
 	fmt.Printf("  %+v\n", result)
 }

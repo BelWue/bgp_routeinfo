@@ -29,6 +29,9 @@ func (rs *RouteInfoServer) InitLogger(logLevel *string) {
 	if logLevel != nil {
 		rs.SetLogLevel(logLevel)
 	}
+	for _, router := range rs.Routers {
+		router.Logger = rs.Logger
+	}
 }
 
 func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
@@ -91,6 +94,7 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 
 func (rs *RouteInfoServer) Init() {
 	for name, router := range rs.Routers {
+		router.Logger = rs.Logger
 		if len(router.Neighbors) == 0 {
 			rs.Logger.GetApplicationLogger().Fatalf("unconfigured router %s\n", name)
 		}
@@ -103,7 +107,7 @@ func (rs *RouteInfoServer) Init() {
 		if router.neighborSessionState == nil {
 			router.neighborSessionState = make(map[string]bgp.FSMState)
 		}
-		router.Connect(rs.Logger.GetApplicationLogger())
+		router.Connect()
 	}
 }
 
@@ -126,16 +130,17 @@ type Router struct {
 	neighborSessionState     map[string]bgp.FSMState
 	neighborSessionStateLock sync.Mutex
 	GobgpServer              *server.BgpServer
+	Logger                   log.RouteinfoLogger
 }
 
-func (r *Router) Connect(log log.ApplicationLogger) {
+func (r *Router) Connect() {
 	for _, addr := range r.Neighbors {
 		// determine AFI
 		var parsed net.IP
 		var afi api.Family_Afi
 		if parsed = net.ParseIP(addr); parsed != nil {
 		} else {
-			log.Errorf("Invalid address: %s", addr)
+			r.Logger.GetApplicationLogger().Errorf("Invalid address: %s", addr)
 			continue
 		}
 		if addr4 := parsed.To4(); addr4 != nil {
@@ -145,7 +150,7 @@ func (r *Router) Connect(log log.ApplicationLogger) {
 		}
 
 		if err := r.GobgpServer.AddPeer(context.Background(), GenerateAddPeerRequest(r, addr, afi)); err != nil {
-			log.Fatalf("Failed to add peer %s for router %s due to %v", parsed.String(), r.Name, err)
+			r.Logger.GetApplicationLogger().Fatalf("Failed to add peer %s for router %s due to %v", parsed.String(), r.Name, err)
 		}
 	}
 }
@@ -178,7 +183,7 @@ func GenerateAddPeerRequest(r *Router, addr string, afi api.Family_Afi) *api.Add
 	}
 }
 
-func (r *Router) LookupShorter(address string, log log.ApplicationLogger) []RouteInfo {
+func (r *Router) LookupShorter(address string) []RouteInfo {
 	if parsed := net.ParseIP(address); parsed != nil {
 		if addr4 := parsed.To4(); addr4 != nil {
 			address += "/32"
@@ -186,10 +191,10 @@ func (r *Router) LookupShorter(address string, log log.ApplicationLogger) []Rout
 			address += "/128"
 		}
 	}
-	return r.lookup(address, apiutil.LOOKUP_SHORTER, log)
+	return r.lookup(address, apiutil.LOOKUP_SHORTER)
 }
 
-func (r *Router) LookupLonger(address string, log log.ApplicationLogger) []RouteInfo {
+func (r *Router) LookupLonger(address string) []RouteInfo {
 	if parsed := net.ParseIP(address); parsed != nil {
 		if addr4 := parsed.To4(); addr4 != nil {
 			address += "/32"
@@ -197,15 +202,14 @@ func (r *Router) LookupLonger(address string, log log.ApplicationLogger) []Route
 			address += "/128"
 		}
 	}
-	return r.lookup(address, apiutil.LOOKUP_SHORTER, log)
+	return r.lookup(address, apiutil.LOOKUP_SHORTER)
 }
 
-func (r *Router) Lookup(address string, logger log.ApplicationLogger) []RouteInfo {
-	//0 Gets parsed in https://github.com/osrg/gobgp/blob/1e52815dc83b975a10819e30df65bc6fa2f96baf/internal/pkg/table/table.go#L40
-	return r.lookup(address, 0, logger)
+func (r *Router) Lookup(address string) []RouteInfo {
+	return r.lookup(address, apiutil.LOOKUP_EXACT)
 }
 
-func (r *Router) lookup(address string, lookupType apiutil.LookupOption, log log.ApplicationLogger) []RouteInfo {
+func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []RouteInfo {
 	// determine AFI
 	var (
 		parsed net.IP
@@ -218,10 +222,10 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption, log log
 	if parsed == nil {
 		parsed, _, err = net.ParseCIDR(address)
 		if err != nil {
-			log.Warnf("Invalid address: %s: %v", address, err)
+			r.Logger.GetApplicationLogger().Warnf("Invalid address: %s: %v", address, err)
 			return nil
 		} else if parsed == nil {
-			log.Warnf("Invalid address: %s", address)
+			r.Logger.GetApplicationLogger().Warnf("Invalid address: %s", address)
 			return nil
 		}
 	}
@@ -255,30 +259,30 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption, log log
 		Prefixes:  []*apiutil.LookupPrefix{prefixIn},
 	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
 		//debug
-		log.Info(prefix.String())
+		r.Logger.GetApplicationLogger().Info(prefix.String())
 		for _, p := range paths {
-			log.Debug("Returned path: peer_asn = " + string(p.PeerASN) + ", peer_address: " + p.PeerAddress.String() + ", age: " + string(p.Age) + ", best: " + strconv.FormatBool(p.Best))
+			r.Logger.GetApplicationLogger().Debug("Returned path: peer_asn = " + strconv.FormatUint(uint64(p.PeerASN), 10) + ", peer_address: " + p.PeerAddress.String() + ", age: " + strconv.FormatInt(p.Age, 10) + ", best: " + strconv.FormatBool(p.Best))
 		}
 		pr = &prefix
 		pa = &paths
 	})
 	if err != nil {
-		log.Errorf("failed to list path due to %v", err)
+		r.Logger.GetApplicationLogger().Errorf("failed to list path due to %v", err)
 	}
 
 	if err != nil {
-		log.Errorf("Failed listing path due to %v", err)
+		r.Logger.GetApplicationLogger().Errorf("Failed listing path due to %v", err)
 	}
 
 	// no answer here
 	pre := ""
 	if pr == nil {
-		log.Warnf("No prefix returned for %s.", address)
+		r.Logger.GetApplicationLogger().Warnf("No prefix returned for %s.", address)
 	} else {
 		pre = (*pr).String()
 	}
 	if pa == nil {
-		log.Warnf("No destination returned for %s.", address)
+		r.Logger.GetApplicationLogger().Warnf("No destination returned for %s.", address)
 		return nil
 	}
 
@@ -326,10 +330,10 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption, log log
 		}
 
 		if nexthop != nil {
-			log.Info("From nexthop")
+			r.Logger.GetApplicationLogger().Info("From nexthop")
 			nexthopString = nexthop.String()
 		} else if mpReach != nil {
-			log.Info("From mpReach")
+			r.Logger.GetApplicationLogger().Info("From mpReach")
 			nexthopString = mpReach.Nexthop.String()
 		} else {
 			nexthopString = "N/A"
@@ -477,14 +481,14 @@ func (router *Router) Established() bool {
 	return true
 }
 
-func (router *Router) WaitForEOR(log log.ApplicationLogger) {
+func (router *Router) WaitForEOR() {
 	// TODO check for EOR separately
 	var ready bool
 	for !ready && router != nil {
 		time.Sleep(time.Second * 1)
 		_, ready = router.Status()
 		if !ready {
-			log.Infof("Waiting for connection to router %s", router.Name)
+			router.Logger.GetApplicationLogger().Infof("Waiting for connection to router %s", router.Name)
 		}
 	}
 }
