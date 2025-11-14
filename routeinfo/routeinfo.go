@@ -330,10 +330,8 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []Route
 		}
 
 		if nexthop != nil {
-			r.Logger.GetApplicationLogger().Info("From nexthop")
 			nexthopString = nexthop.String()
 		} else if mpReach != nil {
-			r.Logger.GetApplicationLogger().Info("From mpReach")
 			nexthopString = mpReach.Nexthop.String()
 		} else {
 			nexthopString = "N/A"
