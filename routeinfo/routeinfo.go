@@ -258,8 +258,6 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []Route
 		Family:    family,
 		Prefixes:  []*apiutil.LookupPrefix{prefixIn},
 	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
-		//debug
-		r.Logger.GetApplicationLogger().Info(prefix.String())
 		for _, p := range paths {
 			r.Logger.GetApplicationLogger().Debug("Returned path: peer_asn = " + strconv.FormatUint(uint64(p.PeerASN), 10) + ", peer_address: " + p.PeerAddress.String() + ", age: " + strconv.FormatInt(p.Age, 10) + ", best: " + strconv.FormatBool(p.Best))
 		}
@@ -330,10 +328,8 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []Route
 		}
 
 		if nexthop != nil {
-			r.Logger.GetApplicationLogger().Info("From nexthop")
 			nexthopString = nexthop.String()
 		} else if mpReach != nil {
-			r.Logger.GetApplicationLogger().Info("From mpReach")
 			nexthopString = mpReach.Nexthop.String()
 		} else {
 			nexthopString = "N/A"
