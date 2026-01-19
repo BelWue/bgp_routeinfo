@@ -9,8 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-
-	"gopkg.in/yaml.v2"
+	"sigs.k8s.io/yaml"
 )
 
 var rs RouteInfoServer
