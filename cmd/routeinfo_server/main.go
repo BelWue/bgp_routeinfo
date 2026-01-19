@@ -15,7 +15,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/BelWue/bgp_routeinfo/routeinfo"
-	"gopkg.in/yaml.v2"
+
+	"sigs.k8s.io/yaml"
 )
 
 type PrefixResult struct {

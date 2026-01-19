@@ -8,7 +8,7 @@ import (
 	"github.com/BelWue/bgp_routeinfo/log"
 	"github.com/BelWue/bgp_routeinfo/routeinfo"
 	zerolog "github.com/rs/zerolog/log"
-	"gopkg.in/yaml.v2"
+	"sigs.k8s.io/yaml"
 )
 
 func main() {
