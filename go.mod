@@ -5,7 +5,7 @@ go 1.24.10
 replace github.com/BelWue/bgp_routeinfo => .
 
 require (
-	github.com/osrg/gobgp/v4 v4.2.0
+	github.com/osrg/gobgp/v4 v4.3.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
