@@ -69,6 +69,7 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
+	rs.EnableExtraFields()
 
 	rs.InitLogger(logLevelString)
 	if !*enableBgpLog {

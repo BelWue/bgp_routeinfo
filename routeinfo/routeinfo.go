@@ -24,6 +24,12 @@ type RouteInfoServer struct {
 	Logger   log.RouteinfoLogger
 }
 
+func (rs RouteInfoServer) EnableExtraFields() {
+	for _, router := range rs.Routers {
+		router.DecodeExtraFields = true
+	}
+}
+
 func (rs *RouteInfoServer) InitLogger(logLevel *string) {
 	rs.Logger = &log.DefaultRouteInfoLogger{}
 	if logLevel != nil {

@@ -27,6 +27,7 @@ func init() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
+	rs.EnableExtraFields()
 	rs.Init()
 	for _, value := range rs.Routers {
 		// simply use whatever the first router is

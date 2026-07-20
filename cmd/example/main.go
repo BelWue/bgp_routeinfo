@@ -26,6 +26,7 @@ func main() {
 	if err != nil {
 		zerolog.Fatal().Err(err).Msg("Error parsing configuration YAML")
 	}
+	rs.EnableExtraFields()
 	logger := log.ApplicationLoggerFromZerolog(&zerolog.Logger)
 	rs.Logger.SetApplicationLogger(logger)
 	rs.Init() // try to establish all sessions
