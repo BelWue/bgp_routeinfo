@@ -131,6 +131,10 @@ type Router struct {
 	neighborSessionStateLock sync.Mutex
 	GobgpServer              *server.BgpServer
 	Logger                   log.RouteinfoLogger
+
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+	mu       sync.RWMutex
+	cache    map[cacheKey]cacheEntry
 }
 
 func (r *Router) Connect() {
@@ -210,6 +214,22 @@ func (r *Router) Lookup(address string) []RouteInfo {
 }
 
 func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []RouteInfo {
+	key := cacheKey{
+		Address:    address,
+		LookupType: lookupType,
+	}
+
+	if cached, ok := r.getCached(key); ok {
+		return cached
+	}
+
+	result := r.lookupNoCache(address, lookupType)
+
+	r.setCached(key, result)
+	return result
+}
+
+func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) []RouteInfo {
 	// determine AFI
 	var (
 		parsed net.IP
@@ -413,6 +433,42 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []Route
 		results = append(results, result)
 	}
 	return results
+}
+
+func (r *Router) getCached(key cacheKey) ([]RouteInfo, bool) {
+	if r.CacheTTL <= 0 {
+		return nil, false
+	}
+
+	now := time.Now()
+
+	r.mu.RLock()
+	ent, ok := r.cache[key]
+	r.mu.RUnlock()
+
+	if !ok || now.After(ent.ExpiresAt) {
+		return nil, false
+	}
+
+	out := make([]RouteInfo, len(ent.Value))
+	copy(out, ent.Value)
+	return out, true
+}
+
+func (r *Router) setCached(key cacheKey, value []RouteInfo) {
+	if r.CacheTTL <= 0 {
+		return
+	}
+
+	r.mu.Lock()
+	if r.cache == nil {
+		r.cache = make(map[cacheKey]cacheEntry)
+	}
+	r.cache[key] = cacheEntry{
+		ExpiresAt: time.Now().Add(r.CacheTTL),
+		Value:     append([]RouteInfo(nil), value...),
+	}
+	r.mu.Unlock()
 }
 
 type OriginValue uint8
