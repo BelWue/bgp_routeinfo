@@ -275,12 +275,12 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []Route
 	// no answer here
 	pre := ""
 	if pr == nil {
-		r.Logger.GetApplicationLogger().Warnf("No prefix returned for %s.", address)
+		r.Logger.GetApplicationLogger().Infof("No prefix returned for %s.", address)
 	} else {
 		pre = (*pr).String()
 	}
 	if pa == nil {
-		r.Logger.GetApplicationLogger().Warnf("No destination returned for %s.", address)
+		r.Logger.GetApplicationLogger().Infof("No destination returned for %s.", address)
 		return nil
 	}
 
