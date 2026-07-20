@@ -126,6 +126,7 @@ func prefix(writer http.ResponseWriter, request *http.Request) {
 	if (len(qRouters) == 1 && len(qRouters[0]) > 0) || len(qRouters) > 1 {
 		for _, qRouter := range qRouters {
 			if router, ok := rs.Routers[qRouter]; ok {
+				router.DecodeExtraFields = true
 				routers[qRouter] = router
 			} else {
 				response.Errors = append(response.Errors, "Router not found.")

@@ -132,9 +132,10 @@ type Router struct {
 	GobgpServer              *server.BgpServer
 	Logger                   log.RouteinfoLogger
 
-	CacheTTL time.Duration `yaml:"cache_ttl"`
-	mu       sync.RWMutex
-	cache    map[cacheKey]cacheEntry
+	CacheTTL          time.Duration `yaml:"cache_ttl"`
+	DecodeExtraFields bool
+	mu                sync.RWMutex
+	cache             map[cacheKey]cacheEntry
 }
 
 func (r *Router) Connect() {
@@ -307,132 +308,157 @@ func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) 
 	// generate a result per path returned
 	var results []RouteInfo
 	for _, path := range *pa {
-		var (
-			nexthop             *netip.Addr
-			mpReach             *bgp.PathAttributeMpReachNLRI
-			asPath              *[]bgp.AsPathParamInterface
-			communities         *[]uint32
-			origin              *uint8
-			multiExitDisc       *uint32
-			localPref           *uint32
-			largeCommunities    *[]*bgp.LargeCommunity
-			extendedCommunities *[]bgp.ExtendedCommunityInterface
-			aspathNbrs          []uint32
-			communityNames      []string
-			largecommunityNames []string
-
-			nexthopString string
-		)
-
-		for _, a := range path.Attrs {
-			switch a.GetType() {
-			case bgp.BGP_ATTR_TYPE_NEXT_HOP:
-				nexthop = &a.(*bgp.PathAttributeNextHop).Value
-			case bgp.BGP_ATTR_TYPE_MP_REACH_NLRI:
-				mpReach = a.(*bgp.PathAttributeMpReachNLRI)
-			case bgp.BGP_ATTR_TYPE_AS_PATH:
-				asPath = &a.(*bgp.PathAttributeAsPath).Value
-			case bgp.BGP_ATTR_TYPE_COMMUNITIES:
-				communities = &a.(*bgp.PathAttributeCommunities).Value
-			case bgp.BGP_ATTR_TYPE_ORIGIN:
-				origin = &a.(*bgp.PathAttributeOrigin).Value
-			case bgp.BGP_ATTR_TYPE_MULTI_EXIT_DISC:
-				multiExitDisc = &a.(*bgp.PathAttributeMultiExitDisc).Value
-			case bgp.BGP_ATTR_TYPE_LOCAL_PREF:
-				localPref = &a.(*bgp.PathAttributeLocalPref).Value
-			case bgp.BGP_ATTR_TYPE_LARGE_COMMUNITY:
-				largeCommunities = &a.(*bgp.PathAttributeLargeCommunities).Values
-			case bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES:
-				extendedCommunities = &a.(*bgp.PathAttributeExtendedCommunities).Value
-			}
-		}
-
-		if nexthop != nil {
-			nexthopString = nexthop.String()
-		} else if mpReach != nil {
-			nexthopString = mpReach.Nexthop.String()
-		} else {
-			nexthopString = "N/A"
-		}
-
-		// decode aspath
-		if asPath != nil {
-			for _, segment := range *asPath {
-				aspathNbrs = append(aspathNbrs, segment.GetAS()...)
-			}
-		}
-
-		// decode communities
-		if communities != nil {
-			for _, community := range *communities {
-				front := community >> 16
-				back := community & 0xffff
-				communityNames = append(communityNames, fmt.Sprintf("%d:%d", front, back))
-			}
-		}
-
-		// decode large communities
-		if largeCommunities != nil {
-			for _, community := range *largeCommunities {
-				largecommunityNames = append(
-					largecommunityNames,
-					community.String(),
-				)
-			}
-		}
-
-		// partly decode extended communities
-		valid := bgp.VALIDATION_STATE_NOT_FOUND
-		if extendedCommunities != nil {
-			for _, ec := range *extendedCommunities {
-				if val, ok := ec.(*bgp.ValidationExtended); ok {
-					valid = val.State
-					break
-				}
-			}
-		}
-
-		var originValue = OriginValue(255)
-		if origin != nil {
-			originValue = OriginValue(*origin)
-		}
-
-		var originAS uint32
-		if len(aspathNbrs) > 0 {
-			originAS = aspathNbrs[len(aspathNbrs)-1]
-		} else {
-			originAS = 0
-		}
-
-		var (
-			localPrefResult uint32
-			med             uint32
-		)
-		if localPref != nil {
-			localPrefResult = *localPref
-		}
-		if multiExitDisc != nil {
-			med = *multiExitDisc
-		}
-
-		result := RouteInfo{
-			AsPath:           aspathNbrs,
-			Best:             path.Best,
-			Communities:      communityNames,
-			LargeCommunities: largecommunityNames,
-			LocalPref:        localPrefResult,
-			Med:              med,
-			NextHop:          nexthopString,
-			OriginAs:         originAS,
-			Origin:           originValue,
-			Peer:             path.PeerAddress.String(),
-			Prefix:           pre,
-			Timestamp:        time.Unix(path.Age, 0),
-			Validation:       valid,
+		result := decodeRouteInfoMinimal(path)
+		if r.DecodeExtraFields {
+			decodeExtraFields(&result, path, pre)
 		}
 		results = append(results, result)
 	}
 	return results
+}
+
+func decodeExtraFields(result *RouteInfo, path *apiutil.Path, pre string) {
+	var (
+		origin           *uint8
+		communities      *[]uint32
+		largeCommunities *[]*bgp.LargeCommunity
+	)
+
+	for _, a := range path.Attrs {
+		switch a.GetType() {
+		case bgp.BGP_ATTR_TYPE_COMMUNITIES:
+			communities = &a.(*bgp.PathAttributeCommunities).Value
+		case bgp.BGP_ATTR_TYPE_LARGE_COMMUNITY:
+			largeCommunities = &a.(*bgp.PathAttributeLargeCommunities).Values
+		case bgp.BGP_ATTR_TYPE_ORIGIN:
+			origin = &a.(*bgp.PathAttributeOrigin).Value
+		}
+	}
+
+	result.Prefix = pre
+	decodeOrigin(result, origin)
+	result.Timestamp = time.Unix(path.Age, 0)
+	result.Peer = path.PeerAddress.String()
+	decodeCommunities(result, communities)
+	decodeLargeCommunities(result, largeCommunities)
+}
+
+func decodeAsPath(target *RouteInfo, asPath *[]bgp.AsPathParamInterface) {
+	var aspathNbrs []uint32
+	var originAS uint32
+	if asPath == nil {
+		target.OriginAs = 0
+		return
+	}
+	for _, segment := range *asPath {
+		aspathNbrs = append(aspathNbrs, segment.GetAS()...)
+	}
+	if len(aspathNbrs) > 0 {
+		originAS = aspathNbrs[len(aspathNbrs)-1]
+	} else {
+		originAS = 0
+	}
+
+	target.AsPath = aspathNbrs
+	target.OriginAs = originAS
+}
+
+func decodeCommunities(target *RouteInfo, communities *[]uint32) {
+	var communityNames []string
+	if communities == nil {
+		return
+	}
+	for _, community := range *communities {
+		front := community >> 16
+		back := community & 0xffff
+		communityNames = append(communityNames, fmt.Sprintf("%d:%d", front, back))
+	}
+	target.Communities = communityNames
+}
+
+func decodeLargeCommunities(target *RouteInfo, largeCommunities *[]*bgp.LargeCommunity) {
+	var largeCommunitiesName []string
+	if largeCommunities == nil {
+		return
+	}
+
+	for _, community := range *largeCommunities {
+		largeCommunitiesName = append(largeCommunitiesName, community.String())
+	}
+	target.LargeCommunities = largeCommunitiesName
+}
+
+func decodeValidation(target *RouteInfo, extendedCommunities *[]bgp.ExtendedCommunityInterface) {
+	valid := bgp.VALIDATION_STATE_NOT_FOUND
+	if extendedCommunities != nil {
+		for _, ec := range *extendedCommunities {
+			if val, ok := ec.(*bgp.ValidationExtended); ok {
+				valid = val.State
+				break
+			}
+		}
+	}
+	target.Validation = valid
+}
+
+func decodeRouteInfoMinimal(path *apiutil.Path) RouteInfo {
+	var (
+		nexthop             *netip.Addr
+		mpReach             *bgp.PathAttributeMpReachNLRI
+		asPath              *[]bgp.AsPathParamInterface
+		multiExitDisc       *uint32
+		localPref           *uint32
+		extendedCommunities *[]bgp.ExtendedCommunityInterface
+	)
+	for _, a := range path.Attrs {
+		switch a.GetType() {
+		case bgp.BGP_ATTR_TYPE_NEXT_HOP:
+			nexthop = &a.(*bgp.PathAttributeNextHop).Value
+		case bgp.BGP_ATTR_TYPE_MP_REACH_NLRI:
+			mpReach = a.(*bgp.PathAttributeMpReachNLRI)
+		case bgp.BGP_ATTR_TYPE_AS_PATH:
+			asPath = &a.(*bgp.PathAttributeAsPath).Value
+
+		case bgp.BGP_ATTR_TYPE_MULTI_EXIT_DISC:
+			multiExitDisc = &a.(*bgp.PathAttributeMultiExitDisc).Value
+		case bgp.BGP_ATTR_TYPE_LOCAL_PREF:
+			localPref = &a.(*bgp.PathAttributeLocalPref).Value
+		case bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES:
+			extendedCommunities = &a.(*bgp.PathAttributeExtendedCommunities).Value
+		}
+	}
+	result := &RouteInfo{}
+	decodeNextHop(result, nexthop, mpReach)
+	decodeAsPath(result, asPath)
+	decodeValidation(result, extendedCommunities)
+	result.Best = path.Best
+
+	if localPref != nil {
+		result.LocalPref = *localPref
+	}
+	if multiExitDisc != nil {
+		result.Med = *multiExitDisc
+	}
+
+	return *result
+}
+
+func decodeOrigin(target *RouteInfo, origin *uint8) {
+	var originValue = OriginValue(255)
+	if origin != nil {
+		originValue = OriginValue(*origin)
+	}
+	target.Origin = originValue
+}
+
+func decodeNextHop(target *RouteInfo, nexthop *netip.Addr, mpReach *bgp.PathAttributeMpReachNLRI) {
+	if nexthop != nil {
+		target.NextHop = nexthop.String()
+	} else if mpReach != nil {
+		target.NextHop = mpReach.Nexthop.String()
+	} else {
+		target.NextHop = "N/A"
+	}
 }
 
 func (r *Router) getCached(key cacheKey) ([]RouteInfo, bool) {
