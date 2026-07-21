@@ -3,7 +3,6 @@ package routeinfo
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -41,14 +40,14 @@ type cacheKey struct {
 func (r *Router) Connect() {
 	for _, addr := range r.Neighbors {
 		// determine AFI
-		var parsed net.IP
-		var afi api.Family_Afi
-		if parsed = net.ParseIP(addr); parsed != nil {
-		} else {
+		parsed, err := netip.ParseAddr(addr)
+		if err != nil {
 			r.Logger.GetApplicationLogger().Errorf("Invalid address: %s", addr)
 			continue
 		}
-		if addr4 := parsed.To4(); addr4 != nil {
+
+		var afi api.Family_Afi
+		if parsed.Is4() || parsed.Is4In6() {
 			afi = api.Family_AFI_IP
 		} else {
 			afi = api.Family_AFI_IP6
@@ -99,8 +98,8 @@ func (r *Router) LookupLonger(address string) []RouteInfo {
 }
 
 func prepareAddress(address string) string {
-	if parsed := net.ParseIP(address); parsed != nil {
-		if addr4 := parsed.To4(); addr4 != nil {
+	if addr, err := netip.ParseAddr(address); err == nil {
+		if addr.Is4() || addr.Is4In6() {
 			address += "/32"
 		} else {
 			address += "/128"
@@ -130,36 +129,18 @@ func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []Route
 }
 
 func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) []RouteInfo {
-	// determine AFI
 	var (
-		parsed net.IP
 		family bgp.Family
 		err    error
-		// subnet *net.IPNet
 	)
 
-	parsed = net.ParseIP(address)
-	if parsed == nil {
-		parsed, _, err = net.ParseCIDR(address)
-		if err != nil {
-			r.Logger.GetApplicationLogger().Warnf("Invalid address: %s: %v", address, err)
-			return nil
-		} else if parsed == nil {
-			r.Logger.GetApplicationLogger().Warnf("Invalid address: %s", address)
-			return nil
-		}
-	}
-
-	if addr4 := parsed.To4(); addr4 != nil {
-		family = bgp.RF_IPv4_UC
-		// if subnet == nil {
-		// 	address += "/32"
-		// }
+	if addr, perr := netip.ParseAddr(address); perr == nil {
+		family = familyFromAddr(addr)
+	} else if prefix, perr := netip.ParsePrefix(address); perr == nil {
+		family = familyFromAddr(prefix.Addr())
 	} else {
-		family = bgp.RF_IPv6_UC
-		// if subnet == nil {
-		// 	address += "/128"
-		// }
+		r.Logger.GetApplicationLogger().Warnf("Invalid address: %s", address)
+		return nil
 	}
 
 	// build request
@@ -191,10 +172,6 @@ func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) 
 		r.Logger.GetApplicationLogger().Errorf("failed to list path due to %v", err)
 	}
 
-	if err != nil {
-		r.Logger.GetApplicationLogger().Errorf("Failed listing path due to %v", err)
-	}
-
 	// no answer here
 	pre := ""
 	if pr == nil {
@@ -217,6 +194,13 @@ func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) 
 		results = append(results, result)
 	}
 	return results
+}
+
+func familyFromAddr(addr netip.Addr) bgp.Family {
+	if addr.Is4() || addr.Is4In6() {
+		return bgp.RF_IPv4_UC
+	}
+	return bgp.RF_IPv6_UC
 }
 
 func decodeExtraFields(result *RouteInfo, path *apiutil.Path, pre string) {
