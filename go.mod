@@ -36,6 +36,7 @@ require (
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/k-sone/critbitgo v1.4.0 // indirect
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/afero v1.15.0 // indirect
