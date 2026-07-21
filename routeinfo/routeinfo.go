@@ -195,17 +195,16 @@ func GenerateAddPeerRequest(r *Router, addr string, afi api.Family_Afi) *api.Add
 }
 
 func (r *Router) LookupShorter(address string) []RouteInfo {
-	if parsed := net.ParseIP(address); parsed != nil {
-		if addr4 := parsed.To4(); addr4 != nil {
-			address += "/32"
-		} else {
-			address += "/128"
-		}
-	}
+	address = prepareAddress(address)
 	return r.lookup(address, apiutil.LOOKUP_SHORTER)
 }
 
 func (r *Router) LookupLonger(address string) []RouteInfo {
+	address = prepareAddress(address)
+	return r.lookup(address, apiutil.LOOKUP_LONGER)
+}
+
+func prepareAddress(address string) string {
 	if parsed := net.ParseIP(address); parsed != nil {
 		if addr4 := parsed.To4(); addr4 != nil {
 			address += "/32"
@@ -213,7 +212,7 @@ func (r *Router) LookupLonger(address string) []RouteInfo {
 			address += "/128"
 		}
 	}
-	return r.lookup(address, apiutil.LOOKUP_SHORTER)
+	return address
 }
 
 func (r *Router) Lookup(address string) []RouteInfo {
