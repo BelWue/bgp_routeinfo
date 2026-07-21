@@ -128,6 +128,7 @@ func (rs *RouteInfoServer) Init() {
 		}
 		router.Connect()
 		if router.UseLocalRibCopy {
+			router.WaitForEOR()
 			rs.Logger.GetApplicationLogger().Infof("Initializing rib table for router %s", router.Name)
 			router.SeedRib()
 			rs.Logger.GetApplicationLogger().Infof("Finished initializing rib table for router %s", router.Name)

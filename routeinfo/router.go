@@ -436,11 +436,16 @@ func (router *Router) Established() bool {
 func (router *Router) WaitForEOR() {
 	// TODO check for EOR separately
 	var ready bool
+	waitTotal := 0
 	for !ready && router != nil {
 		time.Sleep(time.Second * 1)
 		_, ready = router.Status()
 		if !ready {
 			router.Logger.GetApplicationLogger().Infof("Waiting for connection to router %s", router.Name)
+		}
+		waitTotal++
+		if waitTotal%10 == 0 {
+			router.Logger.GetApplicationLogger().Warnf("Router %s still waiting for connection before loading RIB - Total waittime %ds", router.Name, waitTotal)
 		}
 	}
 }
