@@ -285,7 +285,10 @@ func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) 
 		Prefixes:  []*apiutil.LookupPrefix{prefixIn},
 	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
 		for _, p := range paths {
-			r.Logger.GetApplicationLogger().Debug("Returned path: peer_asn = " + strconv.FormatUint(uint64(p.PeerASN), 10) + ", peer_address: " + p.PeerAddress.String() + ", age: " + strconv.FormatInt(p.Age, 10) + ", best: " + strconv.FormatBool(p.Best))
+			r.Logger.GetApplicationLogger().Debugf(
+"Returned path: peer_asn = %d, peer_address: %s, age: %d, best: %t",
+				p.PeerASN, p.PeerAddress, p.Age, p.Best,
+)
 		}
 		pr = &prefix
 		pa = &paths
@@ -311,7 +314,7 @@ func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) 
 	}
 
 	// generate a result per path returned
-	var results []RouteInfo
+	results := make([]RouteInfo, 0, len(*pa))
 	for _, path := range *pa {
 		result := decodeRouteInfoMinimal(path)
 		if r.DecodeExtraFields {
