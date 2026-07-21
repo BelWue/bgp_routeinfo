@@ -80,6 +80,9 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 		rs.Logger.GetApplicationLogger().Infof("OnPathUpdate: %v", p)
 	}
 	callbacks.OnBestPath = func(p []*apiutil.Path, t time.Time) {
+		if router.UseLocalRibCopy {
+			router.ApplyBestPath(p)
+		}
 		rs.Logger.GetApplicationLogger().Infof("OnBestPath: %v", p)
 	}
 	callbacks.OnPathEor = func(p *apiutil.Path, t time.Time) {
@@ -124,6 +127,11 @@ func (rs *RouteInfoServer) Init() {
 			router.neighborSessionState = make(map[string]bgp.FSMState)
 		}
 		router.Connect()
+		if router.UseLocalRibCopy {
+			rs.Logger.GetApplicationLogger().Infof("Initializing rib table for router %s", router.Name)
+			router.SeedRib()
+			rs.Logger.GetApplicationLogger().Infof("Finished initializing rib table for router %s", router.Name)
+		}
 	}
 }
 

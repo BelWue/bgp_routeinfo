@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/BelWue/bgp_routeinfo/log"
+	"github.com/gaissmai/bart"
 	lru "github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/osrg/gobgp/v4/api"
 	"github.com/osrg/gobgp/v4/pkg/apiutil"
@@ -24,12 +25,20 @@ type Router struct {
 	GobgpServer              *server.BgpServer
 	Logger                   log.RouteinfoLogger
 
-	CacheTTL  time.Duration `yaml:"cache_ttl"`  // Default = 1m - Set to -1 to disable cache
-	CacheSize int           `yaml:"cache_size"` // Default = 8192 entries
+	CacheTTL        time.Duration `yaml:"cache_ttl"`      // Default = 1m - Set to -1 to disable cache
+	CacheSize       int           `yaml:"cache_size"`     // Default = 8192 entries
+	UseLocalRibCopy bool          `yaml:"local_rib_copy"` // Maintain a local copy of the rib table
 
 	DecodeExtraFields bool
 	mu                sync.RWMutex
 	cache             *lru.LRU[cacheKey, []RouteInfo]
+
+	// ribMu/rib4/rib6: the local RIB mirror used by Lookup(). Populated
+	// once via SeedRib() and kept current incrementally via
+	// ApplyBestPath().
+	ribMu sync.RWMutex
+	rib4  *bart.Table[RouteInfo]
+	rib6  *bart.Table[RouteInfo]
 }
 
 type cacheKey struct {
@@ -434,4 +443,138 @@ func (router *Router) WaitForEOR() {
 			router.Logger.GetApplicationLogger().Infof("Waiting for connection to router %s", router.Name)
 		}
 	}
+}
+
+// ensureTables lazily initializes the local rib4/rib6 tables.
+func (r *Router) ensureTables() {
+
+	if r.rib4 == nil {
+		r.rib4 = new(bart.Table[RouteInfo])
+	}
+	if r.rib6 == nil {
+		r.rib6 = new(bart.Table[RouteInfo])
+	}
+}
+
+// tableFor returns the IPv4 or IPv6 RIB mirror for the given address.
+func (r *Router) tableFor(addr netip.Addr) *bart.Table[RouteInfo] {
+	if addr.Is4() || addr.Is4In6() {
+		return r.rib4
+	}
+	return r.rib6
+}
+
+// SeedRib performs a one-time ListPath call over the whole global table to
+// populate the local RIB mirror at startup (or after a reconnect). This is
+// the only place Lookup-adjacent code still talks to gobgp's RIB-query
+// machinery -- once, not per flow.
+//
+// Call this once after the BGP session(s) for this router are established
+func (r *Router) SeedRib() {
+	r.ribMu.Lock()
+	r.ensureTables()
+	r.ribMu.Unlock()
+
+	for _, family := range []bgp.Family{bgp.RF_IPv4_UC, bgp.RF_IPv6_UC} {
+		err := r.GobgpServer.ListPath(apiutil.ListPathRequest{
+			TableType: api.TableType_TABLE_TYPE_GLOBAL,
+			Family:    family,
+		}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
+			var best *apiutil.Path
+			for _, p := range paths {
+				if p.Best {
+					best = p
+					break
+				}
+			}
+			if best == nil {
+				return
+			}
+			r.storeBest(prefix.String(), best)
+		})
+		if err != nil {
+			r.Logger.GetApplicationLogger().Errorf("SeedRib: failed to list %s paths for router %s: %v", family, r.Name, err)
+		}
+	}
+}
+
+// ApplyBestPath updates the local RIB mirror from a batch of best-path
+// notifications received via gobgp's WatchEvent stream. Wired into the
+// OnBestPath callback in routeinfoserver.go's getBgpInstance()
+func (r *Router) ApplyBestPath(paths []*apiutil.Path) {
+	for _, path := range paths {
+		if path == nil {
+			continue
+		}
+		prefixStr := path.Nlri.String()
+		if path.Withdrawal {
+			r.withdraw(prefixStr)
+			continue
+		}
+		r.storeBest(prefixStr, path)
+	}
+}
+
+func (r *Router) storeBest(prefixStr string, path *apiutil.Path) {
+	prefix, err := netip.ParsePrefix(prefixStr)
+	if err != nil {
+		r.Logger.GetApplicationLogger().Warnf("storeBest: could not parse prefix %q: %v", prefixStr, err)
+		return
+	}
+
+	info := decodeRouteInfoMinimal(path)
+	if r.DecodeExtraFields {
+		decodeExtraFields(&info, path, prefixStr)
+	}
+
+	r.ribMu.Lock()
+	defer r.ribMu.Unlock()
+	r.ensureTables()
+	r.tableFor(prefix.Addr()).Insert(prefix, info)
+}
+
+func (r *Router) withdraw(prefixStr string) {
+	prefix, err := netip.ParsePrefix(prefixStr)
+	if err != nil {
+		r.Logger.GetApplicationLogger().Warnf("withdraw: could not parse prefix %q: %v", prefixStr, err)
+		return
+	}
+
+	r.ribMu.Lock()
+	defer r.ribMu.Unlock()
+	r.ensureTables()
+	r.tableFor(prefix.Addr()).Delete(prefix)
+}
+
+// Lookup returns the best matching route for address from the local RIB
+// mirror -- a pure in-memory longest-prefix-match, no call into gobgp.
+func (r *Router) LookupBestInLocalRibCopy(address string) []RouteInfo {
+	if !r.UseLocalRibCopy {
+		r.Logger.GetApplicationLogger().Fatalf("Can not use LookupBestInLocalRibCopy for router %s without UseLocalRibCopy enabled", r.Name)
+		return []RouteInfo{}
+	}
+	addr, err := netip.ParseAddr(address)
+	if err != nil {
+		// Tolerate a prefix-form address too, and use its address part.
+		prefix, perr := netip.ParsePrefix(address)
+		if perr != nil {
+			r.Logger.GetApplicationLogger().Warnf("Lookup: invalid address: %s", address)
+			return nil
+		}
+		addr = prefix.Addr()
+	}
+
+	r.ribMu.RLock()
+	defer r.ribMu.RUnlock()
+
+	if r.rib4 == nil && r.rib6 == nil {
+		r.Logger.GetApplicationLogger().Warnf("SeedRib() hasn't run yet / no routes learned so far")
+		return nil
+	}
+
+	info, ok := r.tableFor(addr).Lookup(addr)
+	if !ok {
+		return nil
+	}
+	return []RouteInfo{info}
 }
