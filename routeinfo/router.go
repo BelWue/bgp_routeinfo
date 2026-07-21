@@ -109,6 +109,7 @@ func prepareAddress(address string) string {
 }
 
 func (r *Router) Lookup(address string) []RouteInfo {
+	address = prepareAddress(address)
 	return r.lookup(address, apiutil.LOOKUP_EXACT)
 }
 
