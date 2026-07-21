@@ -98,7 +98,7 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 func (rs *RouteInfoServer) Init() {
 	for name, router := range rs.Routers {
 		if router.CacheTTL == 0 {
-			router.CacheTTL = 1 * time.Second
+			router.CacheTTL = 1 * time.Minute
 		} else if router.CacheTTL < 0 {
 			router.CacheTTL = 0
 		}
