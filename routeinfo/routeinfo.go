@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync"
 	"time"
 
@@ -100,6 +99,12 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 
 func (rs *RouteInfoServer) Init() {
 	for name, router := range rs.Routers {
+		if router.CacheTTL == 0 {
+			router.CacheTTL = 1 * time.Second
+		} else if router.CacheTTL < 0 {
+			router.CacheTTL = 0
+		}
+
 		router.Logger = rs.Logger
 		if len(router.Neighbors) == 0 {
 			rs.Logger.GetApplicationLogger().Fatalf("unconfigured router %s\n", name)
@@ -138,7 +143,7 @@ type Router struct {
 	GobgpServer              *server.BgpServer
 	Logger                   log.RouteinfoLogger
 
-	CacheTTL          time.Duration `yaml:"cache_ttl"`
+	CacheTTL          time.Duration `yaml:"cache_ttl"` // Default = 1m - Set to -1 to disable cache
 	DecodeExtraFields bool
 	mu                sync.RWMutex
 	cache             map[cacheKey]cacheEntry
@@ -286,9 +291,9 @@ func (r *Router) lookupNoCache(address string, lookupType apiutil.LookupOption) 
 	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
 		for _, p := range paths {
 			r.Logger.GetApplicationLogger().Debugf(
-"Returned path: peer_asn = %d, peer_address: %s, age: %d, best: %t",
+				"Returned path: peer_asn = %d, peer_address: %s, age: %d, best: %t",
 				p.PeerASN, p.PeerAddress, p.Age, p.Best,
-)
+			)
 		}
 		pr = &prefix
 		pa = &paths
