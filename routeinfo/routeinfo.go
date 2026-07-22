@@ -2,14 +2,11 @@ package routeinfo
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"net/netip"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/BelWue/bgp_routeinfo/log"
+	lru "github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/osrg/gobgp/v4/api"
 	"github.com/osrg/gobgp/v4/pkg/apiutil"
 	"github.com/osrg/gobgp/v4/pkg/metrics"
@@ -22,6 +19,12 @@ type RouteInfoServer struct {
 	RouterId string             `yaml:"routerid"`
 	Routers  map[string]*Router `yaml:"routers"`
 	Logger   log.RouteinfoLogger
+}
+
+func (rs RouteInfoServer) EnableExtraFields() {
+	for _, router := range rs.Routers {
+		router.DecodeExtraFields = true
+	}
 }
 
 func (rs *RouteInfoServer) InitLogger(logLevel *string) {
@@ -77,6 +80,9 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 		rs.Logger.GetApplicationLogger().Infof("OnPathUpdate: %v", p)
 	}
 	callbacks.OnBestPath = func(p []*apiutil.Path, t time.Time) {
+		if router.UseLocalRibCopy {
+			router.ApplyBestPath(p)
+		}
 		rs.Logger.GetApplicationLogger().Infof("OnBestPath: %v", p)
 	}
 	callbacks.OnPathEor = func(p *apiutil.Path, t time.Time) {
@@ -94,6 +100,19 @@ func (rs *RouteInfoServer) getBgpInstance(router *Router) *server.BgpServer {
 
 func (rs *RouteInfoServer) Init() {
 	for name, router := range rs.Routers {
+		if router.CacheTTL == 0 {
+			router.CacheTTL = 1 * time.Minute
+		} else if router.CacheTTL < 0 {
+			router.CacheTTL = 0
+		}
+		if router.CacheTTL > 0 {
+			size := router.CacheSize
+			if size <= 0 {
+				size = 8192
+			}
+			router.cache = lru.NewLRU[cacheKey, []RouteInfo](size, nil, router.CacheTTL)
+		}
+
 		router.Logger = rs.Logger
 		if len(router.Neighbors) == 0 {
 			rs.Logger.GetApplicationLogger().Fatalf("unconfigured router %s\n", name)
@@ -108,6 +127,12 @@ func (rs *RouteInfoServer) Init() {
 			router.neighborSessionState = make(map[string]bgp.FSMState)
 		}
 		router.Connect()
+		if router.UseLocalRibCopy {
+			router.WaitForEOR()
+			rs.Logger.GetApplicationLogger().Infof("Initializing rib table for router %s", router.Name)
+			router.SeedRib()
+			rs.Logger.GetApplicationLogger().Infof("Finished initializing rib table for router %s", router.Name)
+		}
 	}
 }
 
@@ -121,372 +146,6 @@ func (rs *RouteInfoServer) Stop() {
 		}(router)
 	}
 	wg.Wait()
-}
-
-type Router struct {
-	Name                     string   `yaml:"name"`
-	Asn                      uint32   `yaml:"asn"`
-	Neighbors                []string `yaml:"neighbors"`
-	neighborSessionState     map[string]bgp.FSMState
-	neighborSessionStateLock sync.Mutex
-	GobgpServer              *server.BgpServer
-	Logger                   log.RouteinfoLogger
-}
-
-func (r *Router) Connect() {
-	for _, addr := range r.Neighbors {
-		// determine AFI
-		var parsed net.IP
-		var afi api.Family_Afi
-		if parsed = net.ParseIP(addr); parsed != nil {
-		} else {
-			r.Logger.GetApplicationLogger().Errorf("Invalid address: %s", addr)
-			continue
-		}
-		if addr4 := parsed.To4(); addr4 != nil {
-			afi = api.Family_AFI_IP
-		} else {
-			afi = api.Family_AFI_IP6
-		}
-
-		if err := r.GobgpServer.AddPeer(context.Background(), GenerateAddPeerRequest(r, addr, afi)); err != nil {
-			r.Logger.GetApplicationLogger().Fatalf("Failed to add peer %s for router %s due to %v", parsed.String(), r.Name, err)
-		}
-	}
-}
-
-func GenerateAddPeerRequest(r *Router, addr string, afi api.Family_Afi) *api.AddPeerRequest {
-	return &api.AddPeerRequest{
-		Peer: &api.Peer{
-			Conf: &api.PeerConf{
-				NeighborAddress: addr,
-				PeerAsn:         r.Asn,
-			},
-			// define the AFI manually to enable Add-Paths
-			AfiSafis: []*api.AfiSafi{
-				{
-					Config: &api.AfiSafiConfig{
-						Family: &api.Family{
-							Afi:  afi,
-							Safi: api.Family_SAFI_UNICAST,
-						},
-						Enabled: true,
-					},
-					AddPaths: &api.AddPaths{
-						Config: &api.AddPathsConfig{
-							Receive: true,
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func (r *Router) LookupShorter(address string) []RouteInfo {
-	if parsed := net.ParseIP(address); parsed != nil {
-		if addr4 := parsed.To4(); addr4 != nil {
-			address += "/32"
-		} else {
-			address += "/128"
-		}
-	}
-	return r.lookup(address, apiutil.LOOKUP_SHORTER)
-}
-
-func (r *Router) LookupLonger(address string) []RouteInfo {
-	if parsed := net.ParseIP(address); parsed != nil {
-		if addr4 := parsed.To4(); addr4 != nil {
-			address += "/32"
-		} else {
-			address += "/128"
-		}
-	}
-	return r.lookup(address, apiutil.LOOKUP_SHORTER)
-}
-
-func (r *Router) Lookup(address string) []RouteInfo {
-	return r.lookup(address, apiutil.LOOKUP_EXACT)
-}
-
-func (r *Router) lookup(address string, lookupType apiutil.LookupOption) []RouteInfo {
-	// determine AFI
-	var (
-		parsed net.IP
-		family bgp.Family
-		err    error
-		// subnet *net.IPNet
-	)
-
-	parsed = net.ParseIP(address)
-	if parsed == nil {
-		parsed, _, err = net.ParseCIDR(address)
-		if err != nil {
-			r.Logger.GetApplicationLogger().Warnf("Invalid address: %s: %v", address, err)
-			return nil
-		} else if parsed == nil {
-			r.Logger.GetApplicationLogger().Warnf("Invalid address: %s", address)
-			return nil
-		}
-	}
-
-	if addr4 := parsed.To4(); addr4 != nil {
-		family = bgp.RF_IPv4_UC
-		// if subnet == nil {
-		// 	address += "/32"
-		// }
-	} else {
-		family = bgp.RF_IPv6_UC
-		// if subnet == nil {
-		// 	address += "/128"
-		// }
-	}
-
-	// build request
-	prefixIn := &apiutil.LookupPrefix{
-		Prefix:       address,
-		LookupOption: lookupType,
-	}
-
-	// get answer
-	var (
-		pr *bgp.NLRI
-		pa *[]*apiutil.Path
-	)
-	err = r.GobgpServer.ListPath(apiutil.ListPathRequest{
-		TableType: api.TableType_TABLE_TYPE_GLOBAL,
-		Family:    family,
-		Prefixes:  []*apiutil.LookupPrefix{prefixIn},
-	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
-		for _, p := range paths {
-			r.Logger.GetApplicationLogger().Debug("Returned path: peer_asn = " + strconv.FormatUint(uint64(p.PeerASN), 10) + ", peer_address: " + p.PeerAddress.String() + ", age: " + strconv.FormatInt(p.Age, 10) + ", best: " + strconv.FormatBool(p.Best))
-		}
-		pr = &prefix
-		pa = &paths
-	})
-	if err != nil {
-		r.Logger.GetApplicationLogger().Errorf("failed to list path due to %v", err)
-	}
-
-	if err != nil {
-		r.Logger.GetApplicationLogger().Errorf("Failed listing path due to %v", err)
-	}
-
-	// no answer here
-	pre := ""
-	if pr == nil {
-		r.Logger.GetApplicationLogger().Infof("No prefix returned for %s.", address)
-	} else {
-		pre = (*pr).String()
-	}
-	if pa == nil {
-		r.Logger.GetApplicationLogger().Infof("No destination returned for %s.", address)
-		return nil
-	}
-
-	// generate a result per path returned
-	var results []RouteInfo
-	for _, path := range *pa {
-		var (
-			nexthop             *netip.Addr
-			mpReach             *bgp.PathAttributeMpReachNLRI
-			asPath              *[]bgp.AsPathParamInterface
-			communities         *[]uint32
-			origin              *uint8
-			multiExitDisc       *uint32
-			localPref           *uint32
-			largeCommunities    *[]*bgp.LargeCommunity
-			extendedCommunities *[]bgp.ExtendedCommunityInterface
-			aspathNbrs          []uint32
-			communityNames      []string
-			largecommunityNames []string
-
-			nexthopString string
-		)
-
-		for _, a := range path.Attrs {
-			switch a.GetType() {
-			case bgp.BGP_ATTR_TYPE_NEXT_HOP:
-				nexthop = &a.(*bgp.PathAttributeNextHop).Value
-			case bgp.BGP_ATTR_TYPE_MP_REACH_NLRI:
-				mpReach = a.(*bgp.PathAttributeMpReachNLRI)
-			case bgp.BGP_ATTR_TYPE_AS_PATH:
-				asPath = &a.(*bgp.PathAttributeAsPath).Value
-			case bgp.BGP_ATTR_TYPE_COMMUNITIES:
-				communities = &a.(*bgp.PathAttributeCommunities).Value
-			case bgp.BGP_ATTR_TYPE_ORIGIN:
-				origin = &a.(*bgp.PathAttributeOrigin).Value
-			case bgp.BGP_ATTR_TYPE_MULTI_EXIT_DISC:
-				multiExitDisc = &a.(*bgp.PathAttributeMultiExitDisc).Value
-			case bgp.BGP_ATTR_TYPE_LOCAL_PREF:
-				localPref = &a.(*bgp.PathAttributeLocalPref).Value
-			case bgp.BGP_ATTR_TYPE_LARGE_COMMUNITY:
-				largeCommunities = &a.(*bgp.PathAttributeLargeCommunities).Values
-			case bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES:
-				extendedCommunities = &a.(*bgp.PathAttributeExtendedCommunities).Value
-			}
-		}
-
-		if nexthop != nil {
-			nexthopString = nexthop.String()
-		} else if mpReach != nil {
-			nexthopString = mpReach.Nexthop.String()
-		} else {
-			nexthopString = "N/A"
-		}
-
-		// decode aspath
-		if asPath != nil {
-			for _, segment := range *asPath {
-				aspathNbrs = append(aspathNbrs, segment.GetAS()...)
-			}
-		}
-
-		// decode communities
-		if communities != nil {
-			for _, community := range *communities {
-				front := community >> 16
-				back := community & 0xffff
-				communityNames = append(communityNames, fmt.Sprintf("%d:%d", front, back))
-			}
-		}
-
-		// decode large communities
-		if largeCommunities != nil {
-			for _, community := range *largeCommunities {
-				largecommunityNames = append(
-					largecommunityNames,
-					community.String(),
-				)
-			}
-		}
-
-		// partly decode extended communities
-		valid := bgp.VALIDATION_STATE_NOT_FOUND
-		if extendedCommunities != nil {
-			for _, ec := range *extendedCommunities {
-				if val, ok := ec.(*bgp.ValidationExtended); ok {
-					valid = val.State
-					break
-				}
-			}
-		}
-
-		var originValue = OriginValue(255)
-		if origin != nil {
-			originValue = OriginValue(*origin)
-		}
-
-		var originAS uint32
-		if len(aspathNbrs) > 0 {
-			originAS = aspathNbrs[len(aspathNbrs)-1]
-		} else {
-			originAS = 0
-		}
-
-		var (
-			localPrefResult uint32
-			med             uint32
-		)
-		if localPref != nil {
-			localPrefResult = *localPref
-		}
-		if multiExitDisc != nil {
-			med = *multiExitDisc
-		}
-
-		result := RouteInfo{
-			AsPath:           aspathNbrs,
-			Best:             path.Best,
-			Communities:      communityNames,
-			LargeCommunities: largecommunityNames,
-			LocalPref:        localPrefResult,
-			Med:              med,
-			NextHop:          nexthopString,
-			OriginAs:         originAS,
-			Origin:           originValue,
-			Peer:             path.PeerAddress.String(),
-			Prefix:           pre,
-			Timestamp:        time.Unix(path.Age, 0),
-			Validation:       valid,
-		}
-		results = append(results, result)
-	}
-	return results
-}
-
-type OriginValue uint8
-
-const (
-	IGP OriginValue = iota
-	EGP
-	Incomplete
-)
-
-func (v OriginValue) String() string {
-	switch v {
-	case IGP:
-		return "IGP"
-	case EGP:
-		return "EGP"
-	case Incomplete:
-		return "Incomplete"
-	default:
-		return "Unknown"
-	}
-}
-
-type RouteInfo struct {
-	AsPath           []uint32            `json:"aspath"`
-	Best             bool                `json:"best"`
-	Communities      []string            `json:"communities"`
-	LargeCommunities []string            `json:"largecommunities"`
-	LocalPref        uint32              `json:"localpref"`
-	Med              uint32              `json:"med"`
-	NextHop          string              `json:"nexthop"`
-	OriginAs         uint32              `json:"originas"`
-	Origin           OriginValue         `json:"origin"`
-	Peer             string              `json:"peer"`
-	Prefix           string              `json:"prefix"`
-	Timestamp        time.Time           `json:"timestamp"`
-	Validation       bgp.ValidationState `json:"validation"`
-}
-
-func (router *Router) Status() (bool, bool) {
-	var ready = true
-	for _, address := range router.Neighbors {
-		router.GobgpServer.ListPeer(context.Background(), &api.ListPeerRequest{Address: address}, func(p *api.Peer) {
-			for _, a := range p.AfiSafis {
-				s := a.MpGracefulRestart.State
-				ready = ready && s.EndOfRibReceived
-			}
-		})
-	}
-	connected := router.Established()
-	return connected, ready
-}
-
-func (router *Router) Established() bool {
-	router.neighborSessionStateLock.Lock()
-	defer router.neighborSessionStateLock.Unlock()
-	for _, state := range router.neighborSessionState {
-		if state != bgp.BGP_FSM_ESTABLISHED {
-			return false
-		}
-	}
-	return true
-}
-
-func (router *Router) WaitForEOR() {
-	// TODO check for EOR separately
-	var ready bool
-	for !ready && router != nil {
-		time.Sleep(time.Second * 1)
-		_, ready = router.Status()
-		if !ready {
-			router.Logger.GetApplicationLogger().Infof("Waiting for connection to router %s", router.Name)
-		}
-	}
 }
 
 func (rs *RouteInfoServer) SetLogLevel(logLevel *string) {

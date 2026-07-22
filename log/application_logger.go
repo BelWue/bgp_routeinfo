@@ -62,7 +62,8 @@ func (l *ZerologApplicationLogger) Fatalf(msg string, v ...interface{}) {
 	l.Log.Fatal().Msgf(msg, v...)
 }
 func (l *ZerologApplicationLogger) SetLogLevel(level *string) {
-	l.Log.Level(ZerologLogLevel(level))
+	n := l.Log.Level(ZerologLogLevel(level))
+	l.Log = &n
 }
 
 func ZerologLogLevel(logLevel *string) zerolog.Level {
